@@ -1,0 +1,28 @@
+---
+# Pre-deployment validation
+
+- name: Validate cluster is accessible
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Node
+  register: nodes
+  failed_when: nodes.resources | length == 0
+
+- name: Validate required namespaces exist
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+  register: ns_check
+  failed_when: ns_check.resources | length == 0
+  loop:
+    - openshift-gitops
+    - "{{ validated_patterns_namespace }}"
+
+- name: Display pre-deployment validation status
+  debug:
+    msg: |
+      ✅ Pre-deployment validation passed:
+      - Cluster accessible: Yes
+      - Nodes: {{ nodes.resources | length }}
+      - Required namespaces: Present

@@ -1,0 +1,18 @@
+---
+# Uninstall Jupyter Notebook Validator Operator
+# Usage: make uninstall-jupyter-validator
+
+- name: Uninstall Jupyter Notebook Validator Operator
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Display uninstallation message
+      debug:
+        msg: "🗑️  Uninstalling Jupyter Notebook Validator Operator"
+
+    - name: Cleanup operator
+      include_role:
+        name: validated_patterns_jupyter_validator
+        tasks_from: cleanup_operator

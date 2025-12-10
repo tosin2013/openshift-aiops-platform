@@ -1,0 +1,35 @@
+---
+# Check RBAC permissions
+
+- name: Get current user/service account
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ServiceAccount
+    namespace: default
+    name: default
+  register: current_sa
+  failed_when: current_sa.resources | length == 0
+
+- name: Check cluster-admin role exists
+  kubernetes.core.k8s_info:
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    name: cluster-admin
+  register: cluster_admin_role
+  failed_when: cluster_admin_role.resources | length == 0
+
+- name: Display RBAC status
+  debug:
+    msg: "✅ RBAC permissions are configured"
+
+- name: Check if user can list namespaces (permission test)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+  register: namespace_test
+  failed_when: false
+  ignore_errors: yes
+
+- name: Display namespace permission status
+  debug:
+    msg: "{{ '✅ User has permission to list namespaces' if namespace_test.resources is defined else 'ℹ️  Limited namespace permissions' }}"

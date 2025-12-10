@@ -1,0 +1,31 @@
+---
+# YAML linting configuration for OpenShift AI Ops Platform
+extends: default
+
+rules:
+  # Line length (allow longer lines for URLs and strings)
+  line-length:
+    max: 120
+    level: warning
+
+  # Indentation (2 spaces)
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+  # Comments (allow comments starting at beginning of line)
+  comments:
+    min-spaces-from-content: 1
+
+  # Document start (optional)
+  document-start: disable
+
+  # Truthy values (allow yes/no)
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']
+    check-keys: false
+
+# Ignore Helm templates
+ignore: |
+  charts/*/templates/
+  .github/

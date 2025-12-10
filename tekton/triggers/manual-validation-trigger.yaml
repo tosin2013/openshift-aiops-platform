@@ -1,0 +1,131 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: manual-validation-trigger
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: manual-validation-trigger
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  description: |
+    Manual trigger for deployment validation pipeline.
+    Allows users to run validation on-demand via HTTP POST request.
+
+  serviceAccountName: tekton-triggers-sa
+
+  interceptors:
+    - ref:
+        name: "cel"
+      params:
+        - name: "filter"
+          value: "body.action == 'validate'"
+
+  bindings:
+    - ref: manual-validation-binding
+
+  template:
+    ref: manual-validation-template
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: manual-validation-binding
+  namespace: openshift-pipelines
+spec:
+  params:
+    - name: namespace
+      value: $(body.namespace || 'self-healing-platform')
+    - name: cluster-version
+      value: $(body.cluster_version || '4.18')
+    - name: validation-type
+      value: $(body.validation_type || 'full')
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: manual-validation-template
+  namespace: openshift-pipelines
+spec:
+  params:
+    - name: namespace
+      description: Target namespace for validation
+    - name: cluster-version
+      description: Minimum required OpenShift version
+    - name: validation-type
+      description: Type of validation (full or model-serving)
+
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: manual-validation-run-
+        namespace: openshift-pipelines
+        labels:
+          app.kubernetes.io/name: manual-validation-run
+          app.kubernetes.io/part-of: openshift-aiops-platform
+          trigger: manual
+          validation-type: $(tt.params.validation-type)
+      spec:
+        pipelineRef:
+          name: deployment-validation-pipeline
+        params:
+          - name: namespace
+            value: $(tt.params.namespace)
+          - name: cluster-version
+            value: $(tt.params.cluster-version)
+        serviceAccountName: tekton-triggers-sa
+        timeout: 30m
+
+---
+apiVersion: v1
+kind: EventListener
+metadata:
+  name: manual-validation-listener
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: manual-validation-listener
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  serviceAccountName: tekton-triggers-sa
+  triggers:
+    - name: manual-validation-trigger
+      triggerRef: manual-validation-trigger
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: manual-validation-listener
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: manual-validation-listener
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  selector:
+    eventlistener: manual-validation-listener
+  ports:
+    - name: http-listener
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: manual-validation-listener
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: manual-validation-listener
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  to:
+    kind: Service
+    name: manual-validation-listener
+  port:
+    targetPort: http-listener
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

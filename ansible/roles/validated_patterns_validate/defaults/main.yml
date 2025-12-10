@@ -1,0 +1,12 @@
+---
+# Defaults for validated_patterns_validate role
+
+# Validation configuration
+validated_patterns_namespace: "validated-patterns"
+validated_patterns_validation_timeout: 300  # seconds
+
+# Validation stages
+validated_patterns_validate_pre_deployment: true
+validated_patterns_validate_deployment: true
+validated_patterns_validate_post_deployment: true
+validated_patterns_validate_health: true

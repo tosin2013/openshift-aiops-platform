@@ -1,0 +1,71 @@
+---
+# Test playbook for validated_patterns_notebooks role
+
+- name: Test Jupyter Notebook Validator Operator Deployment
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    notebooks_operator_enabled: true
+    notebooks_validation_namespace: "self-healing-platform"
+    notebooks_create_validation_jobs: true
+    notebooks_validation_jobs:
+      - name: "test-hello-world"
+        path: "notebooks/tier1-simple/01-hello-world.ipynb"
+        tier: "tier1"
+        image: "quay.io/jupyter/minimal-notebook:latest"
+        memory_request: "512Mi"
+        cpu_request: "500m"
+        memory_limit: "1Gi"
+        cpu_limit: "1000m"
+        timeout: "10m"
+
+  roles:
+    - role: validated_patterns_notebooks
+
+  post_tasks:
+    - name: Verify operator deployment
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: jupyter-validator-controller-manager
+        namespace: jupyter-validator-system
+      register: operator_check
+
+    - name: Assert operator is deployed
+      assert:
+        that:
+          - operator_check.resources | length > 0
+          - operator_check.resources[0].status.readyReplicas == 2
+        fail_msg: "Operator deployment failed"
+        success_msg: "Operator deployment successful"
+
+    - name: Verify NotebookValidationJob CRD
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: notebookvalidationjobs.mlops.mlops.dev
+      register: crd_check
+
+    - name: Assert CRD is registered
+      assert:
+        that:
+          - crd_check.resources | length > 0
+        fail_msg: "NotebookValidationJob CRD not found"
+        success_msg: "NotebookValidationJob CRD registered"
+
+    - name: Verify validation job created
+      kubernetes.core.k8s_info:
+        api_version: mlops.mlops.dev/v1alpha1
+        kind: NotebookValidationJob
+        name: test-hello-world
+        namespace: self-healing-platform
+      register: job_check
+
+    - name: Assert validation job exists
+      assert:
+        that:
+          - job_check.resources | length > 0
+        fail_msg: "NotebookValidationJob not created"
+        success_msg: "NotebookValidationJob created successfully"

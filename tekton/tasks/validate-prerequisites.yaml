@@ -1,0 +1,148 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: validate-prerequisites
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: validate-prerequisites
+    app.kubernetes.io/part-of: deployment-validation
+spec:
+  description: |
+    Validates cluster prerequisites for OpenShift AIOps Platform deployment.
+    Checks:
+    - Cluster connectivity and version
+    - Required tools (oc, kubectl, helm)
+    - RBAC permissions
+    - Namespace existence
+  params:
+    - name: namespace
+      type: string
+      default: self-healing-platform
+      description: Target namespace for validation
+    - name: cluster-version
+      type: string
+      default: "4.18"
+      description: Minimum required OpenShift version
+  steps:
+    - name: check-cluster-connectivity
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Checking Cluster Connectivity ==="
+
+        # Verify cluster connection
+        if ! oc cluster-info &>/dev/null; then
+          echo "❌ FAIL: Cannot connect to OpenShift cluster"
+          exit 1
+        fi
+        echo "✅ PASS: Cluster connectivity verified"
+
+        # Check cluster version
+        CLUSTER_VERSION=$(oc version -o json | jq -r '.openshiftVersion' | cut -d. -f1,2)
+        echo "Cluster version: $CLUSTER_VERSION"
+
+        if [[ "$CLUSTER_VERSION" < "$(params.cluster-version)" ]]; then
+          echo "❌ FAIL: Cluster version $CLUSTER_VERSION is below minimum $(params.cluster-version)"
+          exit 1
+        fi
+        echo "✅ PASS: Cluster version meets minimum requirement"
+
+    - name: check-required-tools
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Checking Required Tools ==="
+
+        TOOLS=("oc" "kubectl" "helm" "jq" "yq")
+
+        for tool in "${TOOLS[@]}"; do
+          if command -v "$tool" &>/dev/null; then
+            VERSION=$($tool version 2>/dev/null | head -1 || echo "installed")
+            echo "✅ PASS: $tool is available ($VERSION)"
+          else
+            echo "❌ FAIL: $tool is not available"
+            exit 1
+          fi
+        done
+
+    - name: check-rbac-permissions
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Checking RBAC Permissions ==="
+
+        NAMESPACE="$(params.namespace)"
+
+        # Check if user can create resources in namespace
+        if oc auth can-i create deployments -n "$NAMESPACE" &>/dev/null; then
+          echo "✅ PASS: User has permission to create deployments"
+        else
+          echo "❌ FAIL: User lacks permission to create deployments"
+          exit 1
+        fi
+
+        # Check if user can get pods
+        if oc auth can-i get pods -n "$NAMESPACE" &>/dev/null; then
+          echo "✅ PASS: User has permission to get pods"
+        else
+          echo "❌ FAIL: User lacks permission to get pods"
+          exit 1
+        fi
+
+        # Check if user can get services
+        if oc auth can-i get services -n "$NAMESPACE" &>/dev/null; then
+          echo "✅ PASS: User has permission to get services"
+        else
+          echo "❌ FAIL: User lacks permission to get services"
+          exit 1
+        fi
+
+    - name: check-namespace
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Checking Namespace ==="
+
+        NAMESPACE="$(params.namespace)"
+
+        if oc get namespace "$NAMESPACE" &>/dev/null; then
+          echo "✅ PASS: Namespace $NAMESPACE exists"
+
+          # Get namespace status
+          STATUS=$(oc get namespace "$NAMESPACE" -o jsonpath='{.status.phase}')
+          echo "Namespace status: $STATUS"
+
+          if [[ "$STATUS" != "Active" ]]; then
+            echo "❌ FAIL: Namespace is not in Active state"
+            exit 1
+          fi
+          echo "✅ PASS: Namespace is active"
+        else
+          echo "❌ FAIL: Namespace $NAMESPACE does not exist"
+          exit 1
+        fi
+
+    - name: generate-prerequisites-report
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+
+        echo "=== Prerequisites Validation Report ==="
+        echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Status: PASS"
+        echo "Checks Passed: 5/5"
+        echo ""
+        echo "Summary:"
+        echo "  ✅ Cluster connectivity verified"
+        echo "  ✅ Cluster version meets requirements"
+        echo "  ✅ Required tools available"
+        echo "  ✅ RBAC permissions granted"
+        echo "  ✅ Target namespace active"

@@ -1,0 +1,22 @@
+---
+extends: default
+
+rules:
+  line-length:
+    max: 200
+    level: warning
+  document-start: disable
+  truthy:
+    allowed-values: ['true', 'false', 'on', 'off']
+  comments:
+    min-spaces-from-content: 1
+  indentation:
+    spaces: consistent
+    indent-sequences: whatever
+  key-duplicates: enable
+
+ignore: |
+  charts/*/templates/*.yaml
+  charts/*/templates/*.tpl
+  .secrets.baseline
+  reference/

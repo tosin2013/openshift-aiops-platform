@@ -1,0 +1,246 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-mcp-server
+  labels:
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: self-healing-platform
+    grafana_dashboard: "1"
+data:
+  mcp-server-performance.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "MCP Server Performance",
+        "tags": ["mcp", "openshift", "aiops", "performance"],
+        "style": "dark",
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "MCP Server Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"cluster-health-mcp-server\"}",
+                "legendFormat": "MCP Server Status"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "green", "value": 1}
+                  ]
+                },
+                "mappings": [
+                  {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+                  {"options": {"1": {"text": "UP"}}, "type": "value"}
+                ]
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(mcp_server_requests_total[5m])",
+                "legendFormat": "{{ `{{method}}` }} - {{ `{{tool}}` }} - {{ `{{status}}` }}"
+              }
+            ],
+            "yAxes": [
+              {"label": "Requests/sec", "min": 0}
+            ],
+            "gridPos": {"h": 8, "w": 9, "x": 6, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Error Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(mcp_server_requests_total{status=\"error\"}[5m]) / rate(mcp_server_requests_total[5m]) * 100",
+                "legendFormat": "Error Rate %"
+              }
+            ],
+            "yAxes": [
+              {"label": "Error Rate %", "min": 0, "max": 100}
+            ],
+            "gridPos": {"h": 8, "w": 9, "x": 15, "y": 0}
+          },
+          {
+            "id": 4,
+            "title": "Request Duration",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, rate(mcp_server_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "50th percentile"
+              },
+              {
+                "expr": "histogram_quantile(0.95, rate(mcp_server_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "95th percentile"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(mcp_server_request_duration_seconds_bucket[5m]))",
+                "legendFormat": "99th percentile"
+              }
+            ],
+            "yAxes": [
+              {"label": "Duration (seconds)", "min": 0}
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+          }
+        ]
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-self-healing
+  labels:
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: self-healing-platform
+    grafana_dashboard: "1"
+data:
+  self-healing-actions.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Self-Healing Actions",
+        "tags": ["self-healing", "coordination", "aiops", "actions"],
+        "style": "dark",
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Coordination Engine Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "coordination_engine_status",
+                "legendFormat": "Engine Status"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "green", "value": 1}
+                  ]
+                },
+                "mappings": [
+                  {"options": {"0": {"text": "UNHEALTHY"}}, "type": "value"},
+                  {"options": {"1": {"text": "HEALTHY"}}, "type": "value"}
+                ]
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Active Actions",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "coordination_engine_active_actions",
+                "legendFormat": "Active Actions"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": 0},
+                    {"color": "yellow", "value": 10},
+                    {"color": "red", "value": 50}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+          }
+        ]
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-cluster-health
+  labels:
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: self-healing-platform
+    grafana_dashboard: "1"
+data:
+  cluster-health-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Cluster Health Overview",
+        "tags": ["cluster", "health", "openshift", "overview"],
+        "style": "dark",
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Cluster Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"kubernetes-apiservers\"}",
+                "legendFormat": "API Server"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "green", "value": 1}
+                  ]
+                },
+                "mappings": [
+                  {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+                  {"options": {"1": {"text": "UP"}}, "type": "value"}
+                ]
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+          }
+        ]
+      }
+    }

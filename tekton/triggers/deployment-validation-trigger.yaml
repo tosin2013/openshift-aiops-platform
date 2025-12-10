@@ -1,0 +1,133 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: deployment-validation-trigger
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: deployment-validation-trigger
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  description: |
+    Webhook trigger for deployment validation pipeline.
+    Automatically runs validation after ArgoCD syncs the platform.
+
+  serviceAccountName: tekton-triggers-sa
+
+  interceptors:
+    - ref:
+        name: "github"
+      params:
+        - name: "secretRef"
+          value:
+            secretName: "github-secret"
+            secretKey: "secretToken"
+        - name: "eventTypes"
+          value: ["push"]
+
+  bindings:
+    - ref: deployment-validation-binding
+
+  template:
+    ref: deployment-validation-template
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: deployment-validation-binding
+  namespace: openshift-pipelines
+spec:
+  params:
+    - name: namespace
+      value: self-healing-platform
+    - name: cluster-version
+      value: "4.18"
+    - name: git-repo-url
+      value: $(body.repository.clone_url)
+    - name: git-revision
+      value: $(body.head_commit.id)
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: deployment-validation-template
+  namespace: openshift-pipelines
+spec:
+  params:
+    - name: namespace
+      description: Target namespace for validation
+    - name: cluster-version
+      description: Minimum required OpenShift version
+    - name: git-repo-url
+      description: Git repository URL
+    - name: git-revision
+      description: Git revision/commit
+
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: deployment-validation-run-
+        namespace: openshift-pipelines
+        labels:
+          app.kubernetes.io/name: deployment-validation-run
+          app.kubernetes.io/part-of: openshift-aiops-platform
+          trigger: webhook
+      spec:
+        pipelineRef:
+          name: deployment-validation-pipeline
+        params:
+          - name: namespace
+            value: $(tt.params.namespace)
+          - name: cluster-version
+            value: $(tt.params.cluster-version)
+        serviceAccountName: tekton-triggers-sa
+        timeout: 30m
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tekton-triggers-sa
+  namespace: openshift-pipelines
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tekton-triggers-role
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns", "taskruns"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tekton-triggers-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-role
+subjects:
+  - kind: ServiceAccount
+    name: tekton-triggers-sa
+    namespace: openshift-pipelines
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-secret
+  namespace: openshift-pipelines
+type: Opaque
+stringData:
+  secretToken: "your-github-webhook-secret"

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: platform-config
+    app.kubernetes.io/name: self-healing-platform
+data:
+  LOG_LEVEL: "INFO"
+  METRICS_PORT: "8090"
+  COORDINATION_ENGINE_PORT: "8080"
+  MODEL_SERVING_TIMEOUT: "30s"
+  PROMETHEUS_SCRAPE_INTERVAL: "30s"
+  CLUSTER_NAME: "hub"
+  ENVIRONMENT: "development"

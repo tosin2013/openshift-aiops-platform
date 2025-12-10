@@ -1,0 +1,26 @@
+---
+# Configure Gitea users
+
+- name: Get Gitea admin password
+  kubernetes.core.k8s_info:
+    api_version: pfe.rhpds.com/v1
+    kind: Gitea
+    name: "{{ gitea_instance_name }}"
+    namespace: "{{ gitea_namespace }}"
+  register: gitea_creds
+
+- name: Extract admin password
+  set_fact:
+    gitea_admin_password: "{{ gitea_creds.resources[0].status.adminPassword }}"
+
+- name: Extract user password
+  set_fact:
+    gitea_user_password: "{{ gitea_creds.resources[0].status.userPassword }}"
+
+- name: Display user configuration status
+  debug:
+    msg: |
+      ✅ Gitea users configured:
+      - Admin user: {{ gitea_admin_user }}
+      - Lab users: {{ gitea_user_format }}-0 to {{ gitea_user_format }}-{{ gitea_user_count - 1 }}
+      - Users ready for login

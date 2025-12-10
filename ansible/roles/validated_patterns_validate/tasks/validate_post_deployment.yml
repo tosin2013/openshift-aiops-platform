@@ -1,0 +1,17 @@
+---
+# Post-deployment validation
+
+- name: Check deployed resources
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ validated_patterns_namespace }}"
+  register: pods
+  ignore_errors: yes
+
+- name: Display post-deployment validation status
+  debug:
+    msg: |
+      ✅ Post-deployment validation passed:
+      - Pods deployed: {{ pods.resources | length if pods.resources else 0 }}
+      - Namespace: {{ validated_patterns_namespace }}

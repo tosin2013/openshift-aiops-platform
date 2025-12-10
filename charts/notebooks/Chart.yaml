@@ -1,0 +1,21 @@
+apiVersion: v2
+name: self-healing-workbench
+description: Self-Healing Platform Jupyter Workbench for AI/ML Development
+type: application
+version: 1.0.0
+appVersion: "2025.1"
+keywords:
+  - jupyter
+  - pytorch
+  - openshift
+  - ai-ml
+  - self-healing
+  - notebooks
+home: https://gitea-with-admin-gitea.apps.cluster-fn2qb.fn2qb.sandbox1343.opentlc.com/opentlc-mgr/openshift-aiops-platform
+sources:
+  - https://gitea-with-admin-gitea.apps.cluster-fn2qb.fn2qb.sandbox1343.opentlc.com/opentlc-mgr/openshift-aiops-platform
+maintainers:
+  - name: OpenShift AIOps Platform Team
+    email: team@example.com
+annotations:
+  category: Development

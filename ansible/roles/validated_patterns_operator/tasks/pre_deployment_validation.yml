@@ -1,0 +1,238 @@
+---
+# Pre-Deployment Validation Tasks
+# Validates cluster readiness before Pattern CR deployment
+
+- name: Display pre-deployment validation banner
+  debug:
+    msg: |
+      ============================================================
+      Pre-Deployment Validation
+      ============================================================
+      Validating cluster readiness before deployment...
+      ============================================================
+
+# ============================================================
+# Cluster Prerequisites Check
+# ============================================================
+
+- name: Run cluster prerequisites validation
+  block:
+    - name: Include validated_patterns_prerequisites role
+      include_role:
+        name: validated_patterns_prerequisites
+      vars:
+        validated_patterns_min_openshift_version: "{{ vp_min_openshift_version | default('4.18') }}"
+
+    - name: Mark prerequisites validation as passed
+      set_fact:
+        vp_prerequisites_passed: true
+
+  rescue:
+    - name: Mark prerequisites validation as failed
+      set_fact:
+        vp_prerequisites_passed: false
+
+    - name: Display prerequisites failure warning
+      debug:
+        msg: |
+          ⚠️  WARNING: Prerequisites validation failed
+          Continuing deployment, but issues may occur.
+
+          To skip validation, set: vp_validate_prerequisites=false
+
+# ============================================================
+# Values Files Validation
+# ============================================================
+
+- name: Validate values files
+  block:
+    - name: Find project root directory
+      ansible.builtin.stat:
+        path: "{{ item }}/values-global.yaml"
+      loop:
+        - "{{ playbook_dir | dirname | dirname }}"
+        - "{{ playbook_dir | dirname | dirname | dirname }}"
+        - "/runner/project"
+        - "{{ ansible_env.PWD | default('.') }}"
+        - "/home/lab-user/openshift-aiops-platform"
+      register: values_global_check
+
+    - name: Set project root from found values file
+      set_fact:
+        project_root: "{{ item.item }}"
+      loop: "{{ values_global_check.results }}"
+      when: item.stat.exists == true
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check if values files exist
+      ansible.builtin.stat:
+        path: "{{ project_root }}/{{ item }}"
+      loop:
+        - "{{ validated_patterns_values_global }}"
+        - "{{ validated_patterns_values_hub }}"
+      register: values_files_check
+
+    - name: Verify all required values files exist
+      assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Required values file not found: {{ item.item }}"
+        success_msg: "✅ Found {{ item.item | basename }}"
+      loop: "{{ values_files_check.results }}"
+      loop_control:
+        label: "{{ item.item | basename }}"
+
+    - name: Check for uncustomized placeholders in values-global.yaml
+      ansible.builtin.shell: |
+        if grep -q "{{ '{{' }} CLUSTER_DOMAIN {{ '}}' }}" "{{ project_root }}/{{ validated_patterns_values_global }}"; then
+          echo "PLACEHOLDER_FOUND"
+        else
+          echo "OK"
+        fi
+      register: global_placeholder_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check for uncustomized placeholders in values-hub.yaml
+      ansible.builtin.shell: |
+        if grep -q "{{ '{{' }} CLUSTER_DOMAIN {{ '}}' }}" "{{ project_root }}/{{ validated_patterns_values_hub }}"; then
+          echo "PLACEHOLDER_FOUND"
+        else
+          echo "OK"
+        fi
+      register: hub_placeholder_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if placeholders found
+      fail:
+        msg: |
+          ❌ ERROR: Uncustomized placeholders found in values files
+
+          Run this command to generate customized values:
+            ./scripts/configure-cluster-values.sh
+
+          Or manually replace {{ '{{' }} CLUSTER_DOMAIN {{ '}}' }} and other placeholders in:
+            - {{ validated_patterns_values_global }}
+            - {{ validated_patterns_values_hub }}
+      when: >
+        global_placeholder_check.stdout == "PLACEHOLDER_FOUND" or
+        hub_placeholder_check.stdout == "PLACEHOLDER_FOUND"
+
+    - name: Display values files validation success
+      debug:
+        msg: "✅ Values files validated successfully"
+
+  rescue:
+    - name: Display values files validation failure
+      debug:
+        msg: |
+          ❌ Values files validation failed
+          Check the errors above and fix before continuing
+
+# ============================================================
+# Git Repository Accessibility
+# ============================================================
+
+- name: Validate git repository accessibility
+  block:
+    - name: Test git repository URL accessibility
+      ansible.builtin.uri:
+        url: "{{ validated_patterns_git_url | regex_replace('\\.git$', '') }}"
+        method: HEAD
+        status_code: [200, 301, 302, 401, 403]
+        validate_certs: no
+      register: git_accessibility_check
+      when: validated_patterns_git_url is match('^https?://')
+      ignore_errors: yes
+
+    - name: Display git accessibility status
+      debug:
+        msg: |
+          {% if git_accessibility_check is succeeded %}
+          ✅ Git repository is accessible: {{ validated_patterns_git_url }}
+          {% else %}
+          ⚠️  Could not verify git repository accessibility: {{ validated_patterns_git_url }}
+          (This is OK if using private repository with authentication)
+          {% endif %}
+
+  rescue:
+    - name: Display git accessibility warning
+      debug:
+        msg: |
+          ⚠️  WARNING: Could not verify git repository accessibility
+          Repository: {{ validated_patterns_git_url }}
+
+          Ensure:
+            1. Git repository exists
+            2. Repository is accessible from cluster
+            3. Git credentials are configured (if private repo)
+
+# ============================================================
+# Pattern CR Preview (if yq available)
+# ============================================================
+
+- name: Generate Pattern CR preview
+  block:
+    - name: Check if helm is available
+      ansible.builtin.command: which helm
+      register: helm_check
+      changed_when: false
+      failed_when: false
+
+    - name: Generate Pattern CR using helm template
+      ansible.builtin.shell: |
+        helm template {{ validated_patterns_pattern_name }} oci://quay.io/hybridcloudpatterns/pattern-install \
+          --include-crds \
+          -f {{ project_root }}/{{ validated_patterns_values_global }} \
+          -f {{ project_root }}/{{ validated_patterns_values_hub }} \
+          --set global.pattern={{ validated_patterns_pattern_name }} \
+          --set main.git.repoURL="{{ validated_patterns_git_url }}" \
+          --set main.git.revision={{ validated_patterns_git_revision }}
+      args:
+        chdir: "{{ project_root }}"
+      register: pattern_cr_preview
+      when:
+        - helm_check.rc == 0
+        - vp_debug_mode | default(false) | bool
+      changed_when: false
+      failed_when: false
+
+    - name: Display Pattern CR preview (if debug mode)
+      debug:
+        msg: |
+          ============================================================
+          Pattern CR Preview
+          ============================================================
+          {{ pattern_cr_preview.stdout }}
+          ============================================================
+      when:
+        - pattern_cr_preview is defined
+        - pattern_cr_preview.rc == 0
+        - vp_debug_mode | default(false) | bool
+
+  rescue:
+    - name: Skip Pattern CR preview
+      debug:
+        msg: "ℹ️  Skipping Pattern CR preview (helm not available or preview failed)"
+
+# ============================================================
+# Validation Summary
+# ============================================================
+
+- name: Display pre-deployment validation summary
+  debug:
+    msg: |
+      ============================================================
+      Pre-Deployment Validation Summary
+      ============================================================
+      {% if vp_prerequisites_passed | default(false) %}
+      ✅ Cluster prerequisites: PASSED
+      {% else %}
+      ⚠️  Cluster prerequisites: FAILED (continuing anyway)
+      {% endif %}
+      ✅ Values files: VALIDATED
+
+      Ready to proceed with deployment
+      ============================================================

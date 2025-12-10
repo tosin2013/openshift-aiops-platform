@@ -1,0 +1,215 @@
+---
+# Deploy namespaced RBAC resources (ServiceAccount, Role, RoleBinding)
+# These must be created BEFORE ArgoCD sync to avoid circular dependencies
+# with sync hooks that require these resources
+
+- name: Display namespaced RBAC deployment purpose
+  debug:
+    msg: |
+      Deploying namespaced RBAC resources in {{ pattern_namespace }}
+      Reason: ArgoCD sync hooks (like noobaa-credentials-init) need these
+      resources to exist before the hook runs, creating a circular dependency.
+
+      By deploying these via Ansible first, we break the cycle:
+      1. Ansible creates SA/Role/RoleBinding
+      2. ArgoCD sync hooks can now run successfully
+      3. ArgoCD takes ownership and manages them going forward
+
+- name: Deploy self-healing-operator ServiceAccount
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: self-healing-operator
+        namespace: "{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+        annotations:
+          argocd.argoproj.io/sync-wave: "-6"
+          description: "Pre-created by Ansible to avoid ArgoCD sync hook circular dependency"
+
+- name: Deploy self-healing-operator Role
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: self-healing-operator
+        namespace: "{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+        annotations:
+          argocd.argoproj.io/sync-wave: "-6"
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "services", "configmaps", "secrets", "events"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: [""]
+          resources: ["namespaces", "nodes", "endpoints"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["persistentvolumes", "persistentvolumeclaims"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["coordination.k8s.io"]
+          resources: ["leases"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["apps"]
+          resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["batch"]
+          resources: ["jobs", "cronjobs"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["storage.k8s.io"]
+          resources: ["storageclasses"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["monitoring.coreos.com"]
+          resources: ["servicemonitors", "prometheusrules"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["serving.kserve.io"]
+          resources: ["inferenceservices"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["kubeflow.org"]
+          resources: ["notebooks"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["image.openshift.io"]
+          resources: ["imagestreams", "imagestreamtags"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["build.openshift.io"]
+          resources: ["builds"]
+          verbs: ["get", "list", "watch"]
+
+- name: Deploy self-healing-operator RoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: self-healing-operator
+        namespace: "{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+        annotations:
+          argocd.argoproj.io/sync-wave: "-6"
+      subjects:
+        - kind: ServiceAccount
+          name: self-healing-operator
+          namespace: "{{ pattern_namespace }}"
+      roleRef:
+        kind: Role
+        name: self-healing-operator
+        apiGroup: rbac.authorization.k8s.io
+
+- name: Deploy self-healing-workbench ServiceAccount
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: self-healing-workbench
+        namespace: "{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+        annotations:
+          argocd.argoproj.io/sync-wave: "-6"
+          description: "Pre-created by Ansible to avoid ArgoCD sync hook circular dependency"
+
+- name: Deploy external-secrets-sa ServiceAccount
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: external-secrets-sa
+        namespace: "{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/name: external-secrets
+          app.kubernetes.io/component: service-account
+          app.kubernetes.io/managed-by: ansible
+        annotations:
+          argocd.argoproj.io/sync-wave: "-6"
+          description: "Pre-created by Ansible for SecretStore validation"
+
+- name: Deploy external-secrets Role
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: "external-secrets-{{ pattern_namespace }}"
+        namespace: "{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/name: external-secrets
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/managed-by: ansible
+        annotations:
+          argocd.argoproj.io/sync-wave: "-6"
+      rules:
+        - apiGroups: [""]
+          resources: ["secrets"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          verbs: ["get", "list", "watch"]
+
+- name: Deploy external-secrets RoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: "external-secrets-{{ pattern_namespace }}"
+        namespace: "{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/name: external-secrets
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/managed-by: ansible
+        annotations:
+          argocd.argoproj.io/sync-wave: "-6"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: "external-secrets-{{ pattern_namespace }}"
+      subjects:
+        - kind: ServiceAccount
+          name: external-secrets-sa
+          namespace: "{{ pattern_namespace }}"
+
+- name: Display namespaced RBAC deployment status
+  debug:
+    msg: |
+      ✅ Namespaced RBAC resources deployed in {{ pattern_namespace }}:
+
+      Self-Healing Operator:
+      - ServiceAccount: self-healing-operator
+      - Role: self-healing-operator
+      - RoleBinding: self-healing-operator
+
+      Self-Healing Workbench:
+      - ServiceAccount: self-healing-workbench
+
+      External Secrets:
+      - ServiceAccount: external-secrets-sa
+      - Role: external-secrets-{{ pattern_namespace }}
+      - RoleBinding: external-secrets-{{ pattern_namespace }}
+
+      These resources prevent two ArgoCD circular dependencies:
+      1. Sync hooks (noobaa-credentials-init) need operator RBAC to run
+      2. SecretStore validation needs external-secrets RBAC to read secrets
+
+      ArgoCD will take ownership of these resources after initial sync.

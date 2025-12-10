@@ -1,0 +1,40 @@
+---
+# Check cert-manager prerequisites
+# The Jupyter Notebook Validator Operator requires cert-manager for webhook certificates
+
+- name: Check if cert-manager pods are running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: cert-manager
+  register: certmanager_pods
+
+- name: Display cert-manager pod count
+  debug:
+    msg: "Found {{ certmanager_pods.resources | length }} cert-manager pods"
+
+- name: Fail if cert-manager is not installed
+  fail:
+    msg: |
+      cert-manager is required but not installed.
+      Install cert-manager v1.13+ before deploying the Jupyter Notebook Validator Operator.
+
+      Quick install:
+      oc apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+  when: certmanager_pods.resources | length == 0
+
+- name: Check cert-manager CRDs
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: certificates.cert-manager.io
+  register: certmanager_crd
+
+- name: Fail if cert-manager CRDs not found
+  fail:
+    msg: "cert-manager CRDs not found. Ensure cert-manager is properly installed."
+  when: certmanager_crd.resources | length == 0
+
+- name: Display cert-manager validation success
+  debug:
+    msg: "✅ cert-manager prerequisites validated successfully"

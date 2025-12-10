@@ -1,0 +1,22 @@
+---
+# PVCs for Tekton build workspaces
+# Required when using buildConfig.strategy: tekton in NotebookValidationJob
+{% for tier in ['tier1', 'tier2', 'tier3'] %}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ tier }}-build-workspace
+  namespace: {{ notebooks_namespace }}
+  labels:
+    app.kubernetes.io/name: notebook-validation
+    app.kubernetes.io/component: build-workspace
+    tier: {{ tier }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ notebooks_build_pvc_size | default('50Gi') }}
+  volumeMode: Filesystem
+---
+{% endfor %}

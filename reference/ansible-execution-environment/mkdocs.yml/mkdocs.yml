@@ -1,0 +1,67 @@
+---
+site_name: Ansible Execution Environment
+site_description:
+site_url: https://tosin2013.github.io/ansible-execution-environment/
+docs_dir: ../docs
+site_dir: ../site
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mermaid2
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.details
+  - admonition
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Tutorials:
+      - Getting Started: tutorials/getting-started.md
+  - How-To Guides:
+      - How to Test Your Execution Environment: how-to/testing-execution-environment.md
+      - How to Add Windows Support: how-to/add-windows-support.md
+      - Build Locally with Makefile and Podman: how-to/build-locally.md
+      - Enable Kubernetes and OpenShift Tooling: how-to/enable-kubernetes-openshift.md
+      - Troubleshoot EE Builds: how-to/troubleshoot-ee-builds.md
+      - Advanced Tasks: how-to/advanced-usage.md
+      - CI/CD with GitHub Actions and Tekton: how-to/ci-cd.md
+      - Build Docs Locally (MkDocs): how-to/build-docs-locally.md
+      - Optional llms.txt Manifest: how-to/llms-txt.md
+  - Reference:
+      - Optional Configs and Secrets: reference/optional-configs-and-secrets.md
+      - Make Targets and Variables: reference/make-targets.md
+      - execution-environment.yml Reference: reference/execution-environment-yaml.md
+      - Tooling Reference: reference/tooling.md
+  - Explanation:
+      - Execution Environment Concepts: explanation/concepts.md
+      - Technology Stack: explanation/technology-stack.md
+      - Design Decisions: explanation/design-decisions.md
+      - Why Keep execution-environment.yml Minimal: explanation/execution-environment-yaml-design.md

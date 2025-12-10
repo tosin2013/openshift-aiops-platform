@@ -1,0 +1,261 @@
+---
+# Playbook: Cleanup Self-Healing Platform Pattern
+# Purpose: Remove platform deployment while optionally retaining shared infrastructure
+# Framework: Validated Patterns (AGENTS.md guidelines)
+# Based on: ADR-020, ADR-030
+# Usage:
+#   - Via Makefile: make end2end-cleanup
+#   - Direct: ansible-navigator run ansible/playbooks/cleanup_pattern.yml
+#   - With options: ansible-navigator run ansible/playbooks/cleanup_pattern.yml -e "cleanup_gitops=true"
+
+- name: Cleanup Self-Healing Platform Pattern
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    # Pattern configuration
+    cleanup_pattern_name: "self-healing-platform"
+    cleanup_pattern_namespace: "self-healing-platform"
+    cleanup_operator_namespace: "openshift-operators"
+    cleanup_gitops_namespace: "openshift-gitops"
+    cleanup_gitea_namespace: "gitea"
+
+    # Application namespaces to delete
+    cleanup_app_namespaces:
+      - self-healing-platform
+      - self-healing-platform-hub
+
+    # Wait timeout for resource deletion (seconds)
+    cleanup_wait_timeout: 300
+
+  pre_tasks:
+    - name: Set cleanup variables from environment
+      set_fact:
+        cleanup_gitops: "{{ lookup('env', 'CLEANUP_GITOPS') | default('false', true) | bool }}"
+        cleanup_gitea: "{{ lookup('env', 'CLEANUP_GITEA') | default('false', true) | bool }}"
+        cleanup_operator: "{{ lookup('env', 'CLEANUP_OPERATOR') | default('false', true) | bool }}"
+        cleanup_cluster_resources: "{{ lookup('env', 'CLEANUP_CLUSTER_RESOURCES') | default('true', true) | bool }}"
+        cleanup_debug: "{{ lookup('env', 'DEBUG_MODE') | default('true', true) | bool }}"
+
+    - name: Display cleanup configuration
+      debug:
+        msg: |
+          ========================================
+          Self-Healing Platform Cleanup
+          ========================================
+          Pattern: {{ cleanup_pattern_name }}
+          Pattern Namespace: {{ cleanup_pattern_namespace }}
+          Operator Namespace: {{ cleanup_operator_namespace }}
+          GitOps Namespace: {{ cleanup_gitops_namespace }}
+          App Namespaces: {{ cleanup_app_namespaces | join(', ') }}
+
+          Cleanup Options:
+          - GitOps: {{ cleanup_gitops }} ({{ 'Will DELETE' if cleanup_gitops else 'Will RETAIN' }})
+          - Gitea: {{ cleanup_gitea }} ({{ 'Will DELETE' if cleanup_gitea else 'Will RETAIN' }})
+          - Operator: {{ cleanup_operator }} ({{ 'Will DELETE' if cleanup_operator else 'Will RETAIN' }})
+          - Cluster Resources: {{ cleanup_cluster_resources }} ({{ 'Will DELETE' if cleanup_cluster_resources else 'Will RETAIN' }})
+          ========================================
+      when: cleanup_debug | bool
+
+    - name: Verify cluster connectivity
+      block:
+        - name: Check cluster connectivity using kubernetes.core
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Namespace
+            name: default
+          register: cluster_check
+          failed_when: false
+
+        - name: Fail if not connected to cluster
+          fail:
+            msg: "Not connected to OpenShift cluster. Please ensure KUBECONFIG is set correctly."
+          when: cluster_check is failed or (cluster_check.resources is not defined and cluster_check.msg is not defined)
+
+        - name: Display cluster info
+          debug:
+            msg: "✓ Connected to cluster successfully"
+          when: cleanup_debug
+
+  roles:
+    # ========================================
+    # Step 1: Cleanup Pattern Resources
+    # ========================================
+    - name: Cleanup pattern resources
+      role: validated_patterns_cleanup
+      tags: ['cleanup', 'pattern']
+      vars:
+        cleanup_pattern_name: "self-healing-platform"
+        cleanup_operator_namespace: "openshift-operators"
+        cleanup_gitops_namespace: "openshift-gitops"
+        cleanup_app_namespaces:
+          - self-healing-platform
+          - self-healing-platform-hub
+        cleanup_wait_timeout: 300
+        cleanup_gitops: "{{ cleanup_gitops | bool }}"
+        cleanup_gitea: "{{ cleanup_gitea | bool }}"
+        cleanup_gitea_namespace: "gitea"
+        cleanup_operator: "{{ cleanup_operator | bool }}"
+        cleanup_debug: "{{ cleanup_debug | default(true) | bool }}"
+
+  post_tasks:
+    # ========================================
+    # Step 2: Cleanup Cluster-Scoped Resources (if enabled)
+    # ========================================
+    # CRITICAL: Cleanup cluster-scoped resources AFTER deleting namespaces
+    # These resources (ClusterRole, ClusterRoleBinding, ClusterServingRuntime)
+    # were deployed by validated_patterns_deploy_cluster_resources role
+    - name: Cleanup cluster-scoped resources manually
+      block:
+        - name: Delete External Secrets Operator ClusterRole
+          kubernetes.core.k8s:
+            api_version: rbac.authorization.k8s.io/v1
+            kind: ClusterRole
+            name: "external-secrets-{{ cleanup_pattern_namespace }}"
+            state: absent
+          ignore_errors: yes
+          when: cleanup_cluster_resources | bool
+
+        - name: Delete External Secrets Operator ClusterRoleBinding
+          kubernetes.core.k8s:
+            api_version: rbac.authorization.k8s.io/v1
+            kind: ClusterRoleBinding
+            name: "external-secrets-{{ cleanup_pattern_namespace }}"
+            state: absent
+          ignore_errors: yes
+          when: cleanup_cluster_resources | bool
+
+        - name: Delete Self-Healing Operator ClusterRole
+          kubernetes.core.k8s:
+            api_version: rbac.authorization.k8s.io/v1
+            kind: ClusterRole
+            name: "self-healing-operator-cluster"
+            state: absent
+          ignore_errors: yes
+          when: cleanup_cluster_resources | bool
+
+        - name: Delete Self-Healing Operator ClusterRoleBinding
+          kubernetes.core.k8s:
+            api_version: rbac.authorization.k8s.io/v1
+            kind: ClusterRoleBinding
+            name: "self-healing-operator-cluster"
+            state: absent
+          ignore_errors: yes
+          when: cleanup_cluster_resources | bool
+
+        - name: Delete Workbench ClusterRole
+          kubernetes.core.k8s:
+            api_version: rbac.authorization.k8s.io/v1
+            kind: ClusterRole
+            name: "self-healing-workbench-cluster"
+            state: absent
+          ignore_errors: yes
+          when: cleanup_cluster_resources | bool
+
+        - name: Delete Workbench ClusterRoleBindings
+          kubernetes.core.k8s:
+            api_version: rbac.authorization.k8s.io/v1
+            kind: ClusterRoleBinding
+            name: "{{ item }}"
+            state: absent
+          loop:
+            - "self-healing-workbench-cluster"
+            - "self-healing-workbench-prometheus"
+          ignore_errors: yes
+          when: cleanup_cluster_resources | bool
+
+        - name: Delete ArgoCD ClusterRole
+          kubernetes.core.k8s:
+            api_version: rbac.authorization.k8s.io/v1
+            kind: ClusterRole
+            name: "self-healing-platform-argocd-hub"
+            state: absent
+          ignore_errors: yes
+          when: cleanup_cluster_resources | bool
+
+        - name: Delete ArgoCD ClusterRoleBinding
+          kubernetes.core.k8s:
+            api_version: rbac.authorization.k8s.io/v1
+            kind: ClusterRoleBinding
+            name: "self-healing-platform-argocd-hub"
+            state: absent
+          ignore_errors: yes
+          when: cleanup_cluster_resources | bool
+
+        - name: Display cluster resources cleanup status
+          debug:
+            msg: "✅ Cluster-scoped resources cleanup attempted"
+          when: cleanup_cluster_resources | bool and cleanup_debug
+
+      tags: ['cluster-resources', 'cleanup']
+
+    - name: Verify cleanup completion
+      block:
+        - name: Check if Pattern CR still exists
+          kubernetes.core.k8s_info:
+            api_version: gitops.hybrid-cloud-patterns.io/v1alpha1
+            kind: Pattern
+            name: "{{ cleanup_pattern_name }}"
+            namespace: "{{ cleanup_operator_namespace }}"
+          register: pattern_cr_check
+          failed_when: false
+
+        - name: Check if application namespaces still exist
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Namespace
+            name: "{{ item }}"
+          register: namespace_check
+          loop: "{{ cleanup_app_namespaces }}"
+          failed_when: false
+
+        - name: Display cleanup verification
+          debug:
+            msg: |
+              ========================================
+              Cleanup Verification
+              ========================================
+              Pattern CR: {{ 'DELETED' if pattern_cr_check.resources | length == 0 else 'STILL EXISTS' }}
+              {% for item in namespace_check.results %}
+              Namespace {{ item.item }}: {{ 'DELETED' if item.resources | length == 0 else 'STILL EXISTS' }}
+              {% endfor %}
+              ========================================
+          when: cleanup_debug
+
+      tags: ['verification', 'cleanup']
+
+    - name: Display cleanup completion summary
+      debug:
+        msg: |
+          ========================================
+          Cleanup Complete
+          ========================================
+          Pattern: {{ cleanup_pattern_name }}
+
+          Cleanup Steps Completed:
+          {% if cleanup_cluster_resources %}✅ Cluster-scoped resources deleted{% endif %}
+          ✅ Pattern CR deleted
+          ✅ ArgoCD applications deleted
+          ✅ Application namespaces deleted
+          {% if cleanup_gitops %}✅ GitOps namespace deleted{% endif %}
+          {% if cleanup_gitea %}✅ Gitea namespace deleted{% endif %}
+          {% if cleanup_operator %}✅ Validated Patterns Operator uninstalled{% endif %}
+
+          Retained Infrastructure:
+          {% if not cleanup_gitops %}✅ GitOps (ArgoCD) - retained{% endif %}
+          {% if not cleanup_gitea %}✅ Gitea - retained{% endif %}
+          {% if not cleanup_operator %}✅ Validated Patterns Operator - retained{% endif %}
+
+          Next Steps:
+          1. Verify cleanup:
+             oc get pattern -A
+             oc get applications -n {{ cleanup_gitops_namespace }}
+             oc get namespaces | grep -E '{{ cleanup_app_namespaces | join("|") }}'
+
+          2. If needed, manually delete remaining resources:
+             oc delete clusterrole,clusterrolebinding -l app.kubernetes.io/name=self-healing-platform
+
+          3. Re-deploy using:
+             ansible-navigator run ansible/playbooks/deploy_complete_pattern.yml
+          ========================================
+      tags: ['summary']

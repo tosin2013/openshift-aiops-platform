@@ -1,0 +1,172 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: self-healing-platform-staging
+
+# Base configuration
+resources:
+  - ../../base
+
+# Staging-specific namespace suffix
+nameSuffix: -staging
+
+# Staging-specific labels
+labels:
+  - pairs:
+      environment: staging
+      deployment.type: staging
+      monitoring.enabled: "true"
+      backup.enabled: "true"
+
+# Staging-specific annotations
+commonAnnotations:
+  deployment.environment: staging
+  deployment.version: "1.0.0"
+  backup.schedule: "0 2 * * *"  # Daily at 2 AM
+  monitoring.scrape: "true"
+
+# Staging-specific patches
+patches:
+  # Coordination Engine - staging configuration
+  - target:
+      kind: Deployment
+      name: coordination-engine
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ENVIRONMENT
+          value: staging
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LOG_LEVEL
+          value: INFO
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: METRICS_ENABLED
+          value: "true"
+
+  # AI/ML Workbench - staging configuration
+  - target:
+      kind: Deployment
+      name: ai-ml-workbench
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ENVIRONMENT
+          value: staging
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: JUPYTER_ENABLE_LAB
+          value: "yes"
+
+  # Storage - staging PVC sizes
+  - target:
+      kind: PersistentVolumeClaim
+      name: model-storage-pvc
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 50Gi
+
+  - target:
+      kind: PersistentVolumeClaim
+      name: data-storage-pvc
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 100Gi
+
+# Staging-specific ConfigMap overrides
+configMapGenerator:
+  - name: platform-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=INFO
+      - METRICS_PORT=8090
+      - COORDINATION_ENGINE_PORT=8080
+      - MODEL_SERVING_TIMEOUT=45s
+      - PROMETHEUS_SCRAPE_INTERVAL=30s
+      - ENVIRONMENT=staging
+      - BACKUP_ENABLED=true
+      - MONITORING_ENABLED=true
+      - ALERT_WEBHOOK_URL=https://hooks.slack.com/services/staging-alerts
+      - DATA_RETENTION_DAYS=30
+      - MAX_CONCURRENT_JOBS=5
+
+# Staging-specific images (use stable tags, not latest)
+images:
+  - name: coordination-engine
+    newName: registry.redhat.io/ubi8/python-39
+    newTag: "1-158"  # Stable tag for staging
+  - name: jupyter-workbench
+    newName: quay.io/opendatahub/workbench-images
+    newTag: jupyter-datascience-c9s-py311_2024a_20240301
+
+# Staging replicas configuration
+replicas:
+  - name: coordination-engine
+    count: 2  # High availability for staging
+  - name: ai-ml-workbench
+    count: 1  # Single instance for staging
+
+# Staging-specific resource quotas
+patchesJson6902:
+  - target:
+      version: v1
+      kind: ResourceQuota
+      name: platform-quota
+    patch: |-
+      - op: replace
+        path: /spec/hard/requests.cpu
+        value: "4"
+      - op: replace
+        path: /spec/hard/requests.memory
+        value: "8Gi"
+      - op: replace
+        path: /spec/hard/limits.cpu
+        value: "8"
+      - op: replace
+        path: /spec/hard/limits.memory
+        value: "16Gi"
+      - op: replace
+        path: /spec/hard/persistentvolumeclaims
+        value: "10"
+      - op: replace
+        path: /spec/hard/requests.storage
+        value: "200Gi"
+
+# Staging-specific secrets (placeholder - actual secrets managed externally)
+secretGenerator:
+  - name: staging-secrets
+    literals:
+      - ENVIRONMENT=staging
+      - ALERT_LEVEL=info
+    options:
+      disableNameSuffixHash: true
+
+# Staging-specific transformers
+transformers:
+  - |-
+    apiVersion: builtin
+    kind: AnnotationsTransformer
+    metadata:
+      name: staging-annotations
+    annotations:
+      deployment.kubernetes.io/revision: "1"
+      app.kubernetes.io/environment: staging
+      backup.velero.io/backup-volumes: data-storage,model-storage
+    fieldSpecs:
+      - path: metadata/annotations
+        create: true

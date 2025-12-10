@@ -1,0 +1,68 @@
+{{- $env := .Values.metadata.environment | default "development" }}
+{{- $envSuffix := printf "-%s" (regexFind "[a-z]+" $env) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ printf "self-healing-data%s" $envSuffix }}
+  labels:
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.selfHealingData.size | default "10Gi" }}
+  storageClassName: {{ .Values.storage.selfHealingData.storageClass | default "gp3-csi" }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ printf "model-artifacts%s" $envSuffix }}
+  labels:
+    app.kubernetes.io/component: storage
+  annotations:
+    description: "Model artifacts storage - requires RWX for multi-pod access"
+spec:
+  accessModes:
+    {{- if or (contains "cephfs" (.Values.storage.modelArtifacts.storageClass | default "gp3-csi")) (contains "nfs" (.Values.storage.modelArtifacts.storageClass | default "gp3-csi")) (contains "azurefile" (.Values.storage.modelArtifacts.storageClass | default "gp3-csi")) }}
+    - ReadWriteMany  # RWX storage class detected
+    {{- else }}
+    - ReadWriteOnce  # RWO fallback (limits to single pod)
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.modelArtifacts.size | default "50Gi" }}
+  storageClassName: {{ .Values.storage.modelArtifacts.storageClass | default "gp3-csi" }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ printf "workbench-data%s" $envSuffix }}
+  labels:
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.workbenchData.size | default "20Gi" }}
+  storageClassName: {{ .Values.storage.workbenchData.storageClass | default "gp3-csi" }}
+---
+# Model Storage PVC - Shared between notebooks and KServe InferenceServices
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-storage-pvc
+  labels:
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/name: model-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+    description: "Shared model storage for notebooks and KServe - requires RWX"
+spec:
+  accessModes:
+    - ReadWriteMany  # Required for notebook and multiple inference service pods
+  resources:
+    requests:
+      storage: {{ if and .Values.storage .Values.storage.modelStorage .Values.storage.modelStorage.size }}{{ .Values.storage.modelStorage.size }}{{ else }}"10Gi"{{ end }}
+  storageClassName: {{ if and .Values.storage .Values.storage.modelStorage .Values.storage.modelStorage.storageClass }}{{ .Values.storage.modelStorage.storageClass }}{{ else }}"ocs-storagecluster-cephfs"{{ end }}

@@ -1,0 +1,116 @@
+---
+# Deploy clustergroup-chart with multisource configuration
+# Updated to use openshift-gitops namespace (matches VP Operator)
+
+- name: Create openshift-gitops namespace if not exists
+  kubernetes.core.k8s:
+    name: "{{ validated_patterns_gitops_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Deploy clustergroup-chart with multisource
+  kubernetes.core.helm:
+    name: clustergroup
+    chart_ref: validatedpatterns/clustergroup
+    chart_version: "{{ validated_patterns_clustergroup_chart_version }}"
+    release_namespace: "{{ validated_patterns_gitops_namespace }}"
+    create_namespace: yes
+    values:
+      clusterGroup:
+        name: hub
+        isHubCluster: true
+        targetCluster: local-cluster
+      global:
+        pattern: "{{ validated_patterns_pattern_name }}"
+        targetRevision: "{{ validated_patterns_target_revision }}"
+        options:
+          syncPolicy: Automatic
+          applicationRetryLimit: 20
+  register: clustergroup_deploy
+  retries: 3
+  delay: 10
+  until: clustergroup_deploy is not failed
+
+- name: Wait for hub ArgoCD Application to be created (only if using operator workflow)
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ validated_patterns_pattern_name }}-hub"
+    namespace: "{{ validated_patterns_gitops_namespace }}"
+  register: hub_application
+  until: hub_application.resources | length > 0
+  retries: 30
+  delay: 10
+  ignore_errors: yes
+  when: validated_patterns_use_operator | default(false) | bool
+
+- name: Display hub application creation status
+  debug:
+    msg: |
+      {% if validated_patterns_use_operator | default(false) %}
+      ✅ Hub ArgoCD Application created
+      Name: {{ validated_patterns_pattern_name }}-hub
+      Namespace: {{ validated_patterns_gitops_namespace }}
+      {% else %}
+      ℹ️  Development workflow: Hub Application will be created manually or via validated_patterns_deploy role
+      {% endif %}
+  when: hub_application is defined
+
+- name: Wait for hub application to be healthy and synced
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ validated_patterns_pattern_name }}-hub"
+    namespace: "{{ validated_patterns_gitops_namespace }}"
+  register: hub_app_status
+  until:
+    - hub_app_status.resources | length > 0
+    - hub_app_status.resources[0].status is defined
+    - hub_app_status.resources[0].status.health is defined
+    - hub_app_status.resources[0].status.health.status == "Healthy"
+    - hub_app_status.resources[0].status.sync is defined
+    - hub_app_status.resources[0].status.sync.status == "Synced"
+  retries: 60
+  delay: 10
+  ignore_errors: yes
+  when: validated_patterns_use_operator | default(false) | bool
+
+- name: Get ArgoCD route
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: openshift-gitops-server
+    namespace: "{{ validated_patterns_gitops_namespace }}"
+  register: argocd_route
+  ignore_errors: yes
+
+- name: Display clustergroup-chart deployment status
+  debug:
+    msg: |
+      ========================================
+      ✅ clustergroup-chart deployed successfully
+      ========================================
+      Chart Configuration:
+      - Chart version: {{ validated_patterns_clustergroup_chart_version | default('0.9.*') }}
+      - Multisource enabled: true
+      - Helm release namespace: {{ validated_patterns_gitops_namespace | default('openshift-gitops') }}
+
+      ArgoCD Configuration:
+      - ArgoCD instance: {{ validated_patterns_argocd_instance_name | default('openshift-gitops') }}
+      - ArgoCD namespace: {{ validated_patterns_gitops_namespace | default('openshift-gitops') }}
+      - Hub Application: {{ validated_patterns_pattern_name | default('self-healing-platform') }}-hub
+      {% if hub_app_status is defined and hub_app_status.resources is defined and hub_app_status.resources | length > 0 and hub_app_status.resources[0].status is defined %}
+      - Health: {{ hub_app_status.resources[0].status.health.status | default('Unknown') }}
+      - Sync: {{ hub_app_status.resources[0].status.sync.status | default('Unknown') }}
+      {% else %}
+      - Status: Will be created in post_tasks (development workflow)
+      {% endif %}
+
+      {% if argocd_route is defined and argocd_route.resources is defined and argocd_route.resources | length > 0 %}
+      ArgoCD Access:
+      - URL: https://{{ argocd_route.resources[0].spec.host }}
+      - Username: admin
+      - Password: oc get secret openshift-gitops-cluster -n {{ validated_patterns_gitops_namespace }} -o jsonpath='{.data.admin\.password}' | base64 -d
+      {% endif %}
+      ========================================

@@ -1,0 +1,165 @@
+---
+# Create Pattern Custom Resource for Validated Patterns Operator
+# Uses common/Makefile operator-deploy to leverage standard Validated Patterns approach
+
+- name: Check if Pattern CR already exists
+  kubernetes.core.k8s_info:
+    api_version: gitops.hybrid-cloud-patterns.io/v1alpha1
+    kind: Pattern
+    name: "{{ validated_patterns_pattern_name }}"
+    namespace: "{{ vp_operator_namespace }}"
+  register: existing_pattern_cr
+  ignore_errors: yes
+
+- name: Display pattern configuration
+  debug:
+    msg: |
+      Creating Pattern CR using common/Makefile operator-deploy:
+      Name: {{ validated_patterns_pattern_name }}
+      Git URL: {{ validated_patterns_git_url }}
+      Revision: {{ validated_patterns_git_revision }}
+      Target Namespace: {{ validated_patterns_target_namespace }}
+      Values Global: {{ validated_patterns_values_global }}
+      Values Hub: {{ validated_patterns_values_hub }}
+  when: vp_debug_mode | bool
+
+- name: Find project root directory (where common/Makefile exists)
+  ansible.builtin.stat:
+    path: "{{ item }}/common/Makefile"
+  loop:
+    - "{{ playbook_dir | dirname | dirname | dirname }}"
+    - "{{ playbook_dir | dirname | dirname | dirname | dirname }}"
+    - "/runner/project"
+    - "{{ ansible_env.PWD | default('.') }}"
+    - "/home/lab-user/openshift-aiops-platform"
+    - "{{ lookup('env', 'PWD') | default(playbook_dir | dirname | dirname | dirname, true) }}"
+  register: common_makefile_check
+
+- name: Set project root from found Makefile location
+  set_fact:
+    project_root: "{{ item.item }}"
+    common_makefile: "{{ item }}"
+  loop: "{{ common_makefile_check.results }}"
+  when: item.stat.exists == true
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Fail if common/Makefile not found
+  ansible.builtin.fail:
+    msg: "common/Makefile not found. Checked paths: {{ common_makefile_check.results | map(attribute='item') | list | join(', ') }}. Cannot use operator-deploy."
+  when: project_root is not defined or common_makefile is not defined
+
+- name: Verify values files exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ project_root }}/{{ validated_patterns_values_global }}"
+    - "{{ project_root }}/{{ validated_patterns_values_hub }}"
+  register: values_files_check
+
+- name: Fail if values files not found
+  ansible.builtin.fail:
+    msg: "Values files not found. Please ensure {{ validated_patterns_values_global }} and {{ validated_patterns_values_hub }} exist in project root."
+  when: values_files_check.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+- name: Generate Pattern CR manifests using helm template
+  ansible.builtin.shell: |
+    helm template {{ validated_patterns_pattern_name }} oci://quay.io/hybridcloudpatterns/pattern-install \
+      --include-crds \
+      -f {{ project_root }}/{{ validated_patterns_values_global }} \
+      -f {{ project_root }}/{{ validated_patterns_values_hub }} \
+      --set global.pattern={{ validated_patterns_pattern_name }} \
+      --set main.git.repoURL="{{ validated_patterns_git_url }}" \
+      --set main.git.revision={{ validated_patterns_git_revision }}
+  args:
+    chdir: "{{ project_root }}"
+  register: helm_template_output
+  when: existing_pattern_cr.resources | length == 0
+  changed_when: helm_template_output.rc == 0
+
+- name: Apply Pattern CR manifests
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ helm_template_output.stdout | from_yaml_all | list | select('defined') | list }}"
+  when:
+    - existing_pattern_cr.resources | length == 0
+    - helm_template_output.rc == 0
+    - item is defined
+    - item is not none
+  register: pattern_cr_result
+
+- name: Display Pattern CR creation status
+  debug:
+    msg: |
+      {% if existing_pattern_cr.resources | length > 0 %}
+      ℹ️  Pattern CR already exists
+      {% else %}
+      ✅ Pattern CR created successfully using helm template (same as common/Makefile operator-deploy)
+      {% endif %}
+      Name: {{ validated_patterns_pattern_name }}
+      Namespace: {{ vp_operator_namespace }}
+      Output: {{ helm_template_output.stdout | default('N/A') }}
+
+- name: Wait for Pattern CR to be processed
+  kubernetes.core.k8s_info:
+    api_version: gitops.hybrid-cloud-patterns.io/v1alpha1
+    kind: Pattern
+    name: "{{ validated_patterns_pattern_name }}"
+    namespace: "{{ vp_operator_namespace }}"
+  register: pattern_status
+  until:
+    - pattern_status.resources | length > 0
+    - pattern_status.resources[0].status is defined
+  retries: 30
+  delay: 10
+  ignore_errors: yes
+
+- name: Display Pattern CR status
+  debug:
+    msg: |
+      Pattern CR Status:
+      Name: {{ validated_patterns_pattern_name }}
+      Cluster: {{ pattern_status.resources[0].status.clusterName | default('Unknown') }}
+      Last Step: {{ pattern_status.resources[0].status.lastStep | default('Initializing') }}
+      Applications: {{ pattern_status.resources[0].status.applications | default([]) | length }}
+  when:
+    - pattern_status.resources | length > 0
+    - vp_debug_mode | bool
+
+- name: Wait for Pattern CR applications to be deployed
+  kubernetes.core.k8s_info:
+    api_version: gitops.hybrid-cloud-patterns.io/v1alpha1
+    kind: Pattern
+    name: "{{ validated_patterns_pattern_name }}"
+    namespace: "{{ vp_operator_namespace }}"
+  register: pattern_deployed
+  until:
+    - pattern_deployed.resources | length > 0
+    - pattern_deployed.resources[0].status is defined
+    - pattern_deployed.resources[0].status.applications is defined
+    - pattern_deployed.resources[0].status.applications | length > 0
+    - pattern_deployed.resources[0].status.applications | selectattr('syncStatus', 'equalto', 'Synced') | list | length > 0
+  retries: "{{ vp_pattern_deploy_timeout // 10 }}"
+  delay: 10
+  ignore_errors: yes
+
+- name: Display final Pattern CR status
+  debug:
+    msg: |
+      ✅ Pattern CR deployed successfully
+      Name: {{ validated_patterns_pattern_name }}
+      Cluster: {{ pattern_deployed.resources[0].status.clusterName | default('Unknown') }}
+      Platform: {{ pattern_deployed.resources[0].status.clusterPlatform | default('Unknown') }}
+      Version: {{ pattern_deployed.resources[0].status.clusterVersion | default('Unknown') }}
+      Last Step: {{ pattern_deployed.resources[0].status.lastStep | default('Unknown') }}
+
+      Applications Deployed:
+      {% for app in pattern_deployed.resources[0].status.applications | default([]) %}
+      - {{ app.name }}: {{ app.syncStatus | default('Unknown') }} / {{ app.healthStatus | default('Unknown') }}
+      {% endfor %}
+
+      The Validated Patterns Operator has deployed:
+      1. OpenShift GitOps (ArgoCD) ✅
+      2. Clustergroup Application ✅
+      3. Pattern Components ✅

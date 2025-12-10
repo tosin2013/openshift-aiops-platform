@@ -1,0 +1,393 @@
+---
+# Default variables for validated_patterns_notebooks role
+# Reference: https://github.com/tosin2013/jupyter-notebook-validator-operator/blob/main/docs/
+
+# ==============================================================================
+# OPERATOR INSTALLATION CONFIGURATION
+# ==============================================================================
+
+# Enable/disable operator deployment
+notebooks_operator_enabled: true
+
+# Installation method: OLM only (OperatorHub)
+# Reference: https://operatorhub.io/operator/jupyter-notebook-validator-operator
+notebooks_install_method: "olm"
+
+# Operator namespace - use openshift-operators for standard OLM installation
+# This avoids needing to create a separate OperatorGroup
+notebooks_operator_namespace: "openshift-operators"
+
+# OLM/OperatorHub configuration
+# The operator is on OperatorHub.io, NOT in OpenShift's built-in community-operators
+# We need to add the operatorhubio-catalog CatalogSource first
+notebooks_operator_channel: "alpha"
+notebooks_operator_catalog_source: "operatorhubio-catalog"
+notebooks_operator_catalog_namespace: "openshift-marketplace"
+
+# Operator version pinning (for controlled upgrades)
+# Reference: https://github.com/tosin2013/jupyter-notebook-validator-operator/releases
+notebooks_operator_version: "v1.0.4-ocp4.20"
+notebooks_operator_image: "quay.io/takinosh/jupyter-notebook-validator-operator:v1.0.4-ocp4.20"
+
+# OperatorHub.io CatalogSource configuration
+notebooks_create_operatorhubio_catalog: true
+notebooks_operatorhubio_catalog_image: "quay.io/operatorhubio/catalog:latest"
+
+# ==============================================================================
+# WEBHOOK CONFIGURATION
+# Reference: https://github.com/tosin2013/jupyter-notebook-validator-operator/blob/main/docs/WEBHOOK_CONFIGURATION.md
+# ==============================================================================
+
+# Webhooks are disabled by default on OperatorHub installations
+# When disabled, you MUST specify:
+#   - serviceAccountName in podConfig
+#   - timeout (required)
+#   - Use envFrom instead of credentials shorthand
+notebooks_enable_webhooks: false
+
+# OpenShift and Prometheus integration
+notebooks_openshift_enabled: true
+notebooks_prometheus_enabled: true
+
+# ==============================================================================
+# VALIDATION NAMESPACE CONFIGURATION
+# ==============================================================================
+
+# Namespace where NotebookValidationJob CRDs will be created
+notebooks_validation_namespace: "self-healing-platform"
+
+# Whether to create validation jobs automatically
+notebooks_create_validation_jobs: false
+
+# ==============================================================================
+# GIT REPOSITORY CONFIGURATION
+# ==============================================================================
+
+notebooks_git_url: "https://github.com/tosin2013/openshift-aiops-platform.git"
+notebooks_git_ref: "main"
+notebooks_git_credentials_secret: "github-pat-credentials"
+
+# ==============================================================================
+# SECRETS MANAGEMENT CONFIGURATION
+# Integrates with validated_patterns_secrets role
+# ==============================================================================
+
+notebooks_deploy_github_secrets: true
+secrets_backend_name: "vault-backend"
+github_secret_path: "github/credentials"
+# Set to true only for private repositories
+require_github_credentials: false
+deploy_external_secrets: false
+
+# ==============================================================================
+# DEFAULT CONTAINER IMAGES
+# Using RHOAI images from redhat-ods-applications ImageStreams
+# These images have Papermill pre-installed and are optimized for OpenShift
+# ==============================================================================
+
+# Base images for different notebook tiers
+notebooks_image_tier1: "image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-minimal-notebook:2025.1"
+notebooks_image_tier2: "image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-generic-data-science-notebook:2025.1"
+notebooks_image_tier3: "image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/pytorch:2025.1"
+
+# Legacy default image (for backward compatibility)
+notebooks_default_image: "image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-generic-data-science-notebook:2025.1"
+
+# ==============================================================================
+# RESOURCE DEFAULTS BY TIER
+# ==============================================================================
+
+# Tier 1: Simple validation, minimal resources (<2 min execution)
+notebooks_tier1_memory_request: "512Mi"
+notebooks_tier1_cpu_request: "500m"
+notebooks_tier1_memory_limit: "1Gi"
+notebooks_tier1_cpu_limit: "1000m"
+notebooks_tier1_timeout: "5m"
+
+# Tier 2: Standard data collection and basic ML (2-10 min execution)
+notebooks_tier2_memory_request: "2Gi"
+notebooks_tier2_cpu_request: "1000m"
+notebooks_tier2_memory_limit: "4Gi"
+notebooks_tier2_cpu_limit: "2000m"
+notebooks_tier2_timeout: "15m"
+
+# Tier 3: Complex ML training and integrations (>10 min execution)
+notebooks_tier3_memory_request: "4Gi"
+notebooks_tier3_cpu_request: "2000m"
+notebooks_tier3_memory_limit: "8Gi"
+notebooks_tier3_cpu_limit: "4000m"
+notebooks_tier3_timeout: "45m"
+
+# Legacy defaults (for backward compatibility)
+notebooks_default_memory_request: "512Mi"
+notebooks_default_cpu_request: "500m"
+notebooks_default_memory_limit: "1Gi"
+notebooks_default_cpu_limit: "1000m"
+notebooks_default_timeout: "10m"
+
+# ==============================================================================
+# TEKTON CONFIGURATION
+# Reference: https://github.com/tosin2013/jupyter-notebook-validator-operator/blob/main/docs/TEKTON_BUILD_SETUP.md
+# ==============================================================================
+
+# ServiceAccount for validation pods (REQUIRED when webhooks disabled)
+notebooks_service_account: "default"
+
+# ServiceAccount for Tekton pipeline builds
+notebooks_tekton_service_account: "pipeline"
+
+# ==============================================================================
+# ARGOCD SYNC WAVE CONFIGURATION
+# ==============================================================================
+
+# Enable sync waves for sequential execution (required for full pipeline validation)
+notebooks_enable_sync_waves: true
+
+# ==============================================================================
+# NOTEBOOK VALIDATION JOBS WITH SYNC WAVES
+# Organized by execution phase based on data/model dependencies
+#
+# Sync Wave Reference:
+#   Wave 0: Setup & Platform Validation (MUST run first)
+#   Wave 1: Data Collection (parallel - metrics, events, logs)
+#   Wave 2: Feature Engineering (depends on Wave 1)
+#   Wave 3: Anomaly Detection Models (parallel - depends on Wave 2)
+#   Wave 4: Ensemble Model (depends on Wave 3)
+#   Wave 5: Self-Healing Logic (depends on Wave 4)
+#   Wave 6: Model Serving (depends on Wave 4)
+#   Wave 7: End-to-End Scenarios (depends on Waves 5-6)
+#   Wave 8: MCP/Lightspeed Integration (depends on Wave 7)
+#   Wave 9: Monitoring (depends on all previous)
+#   Wave 10: Advanced Scenarios (depends on all previous)
+# ==============================================================================
+
+# Tier selection: which tiers to validate
+# Options: 'all', 'tier1', 'tier2', 'tier3', or list like ['tier1', 'tier2']
+notebooks_validation_tiers: "all"
+
+# ==============================================================================
+# WAVE 0: SETUP & PLATFORM VALIDATION (Must run first)
+# ==============================================================================
+notebooks_wave0_jobs:
+  - name: "platform-readiness-validation"
+    path: "notebooks/00-setup/00-platform-readiness-validation.ipynb"
+    description: "Platform infrastructure readiness checks"
+    sync_wave: "0"
+    tier: "tier1"
+  - name: "environment-setup"
+    path: "notebooks/00-setup/environment-setup.ipynb"
+    description: "Environment setup and verification"
+    sync_wave: "0"
+    tier: "tier1"
+
+# ==============================================================================
+# WAVE 1: DATA COLLECTION (Parallel - metrics, events, logs)
+# ==============================================================================
+notebooks_wave1_jobs:
+  - name: "prometheus-metrics-collection"
+    path: "notebooks/01-data-collection/prometheus-metrics-collection.ipynb"
+    description: "Collect metrics from Prometheus"
+    sync_wave: "1"
+    tier: "tier2"
+  - name: "openshift-events-analysis"
+    path: "notebooks/01-data-collection/openshift-events-analysis.ipynb"
+    description: "OpenShift events analysis"
+    sync_wave: "1"
+    tier: "tier1"
+  - name: "log-parsing-analysis"
+    path: "notebooks/01-data-collection/log-parsing-analysis.ipynb"
+    description: "Parse and analyze container logs"
+    sync_wave: "1"
+    tier: "tier2"
+
+# ==============================================================================
+# WAVE 2: FEATURE ENGINEERING (Depends on Wave 1 data)
+# ==============================================================================
+notebooks_wave2_jobs:
+  - name: "feature-store-demo"
+    path: "notebooks/01-data-collection/feature-store-demo.ipynb"
+    description: "Feature store implementation"
+    sync_wave: "2"
+    tier: "tier2"
+  - name: "synthetic-anomaly-generation"
+    path: "notebooks/01-data-collection/synthetic-anomaly-generation.ipynb"
+    description: "Generate synthetic anomaly data for training"
+    sync_wave: "2"
+    tier: "tier1"
+
+# ==============================================================================
+# WAVE 3: ANOMALY DETECTION MODELS (Parallel training - depends on Wave 2)
+# ==============================================================================
+notebooks_wave3_jobs:
+  - name: "isolation-forest-implementation"
+    path: "notebooks/02-anomaly-detection/01-isolation-forest-implementation.ipynb"
+    description: "Isolation Forest anomaly detection"
+    sync_wave: "3"
+    tier: "tier2"
+  - name: "time-series-anomaly-detection"
+    path: "notebooks/02-anomaly-detection/02-time-series-anomaly-detection.ipynb"
+    description: "Time series anomaly detection"
+    sync_wave: "3"
+    tier: "tier2"
+  - name: "lstm-based-prediction"
+    path: "notebooks/02-anomaly-detection/03-lstm-based-prediction.ipynb"
+    description: "LSTM-based anomaly prediction (GPU recommended)"
+    sync_wave: "3"
+    tier: "tier3"
+    gpu_required: true
+
+# ==============================================================================
+# WAVE 4: ENSEMBLE MODEL (Depends on all Wave 3 models)
+# ==============================================================================
+notebooks_wave4_jobs:
+  - name: "ensemble-anomaly-methods"
+    path: "notebooks/02-anomaly-detection/04-ensemble-anomaly-methods.ipynb"
+    description: "Ensemble anomaly detection methods"
+    sync_wave: "4"
+    tier: "tier3"
+
+# ==============================================================================
+# WAVE 5: SELF-HEALING LOGIC (Depends on Wave 4 models)
+# ==============================================================================
+notebooks_wave5_jobs:
+  - name: "rule-based-remediation"
+    path: "notebooks/03-self-healing-logic/rule-based-remediation.ipynb"
+    description: "Rule-based remediation logic"
+    sync_wave: "5"
+    tier: "tier2"
+  - name: "coordination-engine-integration"
+    path: "notebooks/03-self-healing-logic/coordination-engine-integration.ipynb"
+    description: "Coordination engine integration"
+    sync_wave: "5"
+    tier: "tier2"
+  - name: "ai-driven-decision-making"
+    path: "notebooks/03-self-healing-logic/ai-driven-decision-making.ipynb"
+    description: "AI-driven decision making"
+    sync_wave: "5"
+    tier: "tier3"
+  - name: "hybrid-healing-workflows"
+    path: "notebooks/03-self-healing-logic/hybrid-healing-workflows.ipynb"
+    description: "Hybrid healing workflows"
+    sync_wave: "5"
+    tier: "tier3"
+
+# ==============================================================================
+# WAVE 6: MODEL SERVING (Depends on Wave 4 trained models)
+# ==============================================================================
+notebooks_wave6_jobs:
+  - name: "kserve-model-deployment"
+    path: "notebooks/04-model-serving/kserve-model-deployment.ipynb"
+    description: "Deploy models to KServe"
+    sync_wave: "6"
+    tier: "tier3"
+  - name: "model-versioning-mlops"
+    path: "notebooks/04-model-serving/model-versioning-mlops.ipynb"
+    description: "Model versioning and MLOps"
+    sync_wave: "6"
+    tier: "tier3"
+  - name: "inference-pipeline-setup"
+    path: "notebooks/04-model-serving/inference-pipeline-setup.ipynb"
+    description: "Inference pipeline setup"
+    sync_wave: "6"
+    tier: "tier3"
+
+# ==============================================================================
+# WAVE 7: END-TO-END SCENARIOS (Depends on Waves 5-6)
+# ==============================================================================
+notebooks_wave7_jobs:
+  - name: "pod-crash-loop-healing"
+    path: "notebooks/05-end-to-end-scenarios/pod-crash-loop-healing.ipynb"
+    description: "Pod crash loop detection and healing"
+    sync_wave: "7"
+    tier: "tier2"
+  - name: "network-anomaly-response"
+    path: "notebooks/05-end-to-end-scenarios/network-anomaly-response.ipynb"
+    description: "Network anomaly response"
+    sync_wave: "7"
+    tier: "tier2"
+  - name: "resource-exhaustion-detection"
+    path: "notebooks/05-end-to-end-scenarios/resource-exhaustion-detection.ipynb"
+    description: "Resource exhaustion detection"
+    sync_wave: "7"
+    tier: "tier2"
+  - name: "complete-platform-demo"
+    path: "notebooks/05-end-to-end-scenarios/complete-platform-demo.ipynb"
+    description: "Complete platform demonstration"
+    sync_wave: "7"
+    tier: "tier3"
+
+# ==============================================================================
+# WAVE 8: MCP & LIGHTSPEED INTEGRATION (External service dependencies)
+# ==============================================================================
+notebooks_wave8_jobs:
+  - name: "mcp-server-integration"
+    path: "notebooks/06-mcp-lightspeed-integration/mcp-server-integration.ipynb"
+    description: "MCP server integration"
+    sync_wave: "8"
+    tier: "tier3"
+  - name: "openshift-lightspeed-integration"
+    path: "notebooks/06-mcp-lightspeed-integration/openshift-lightspeed-integration.ipynb"
+    description: "OpenShift Lightspeed integration"
+    sync_wave: "8"
+    tier: "tier3"
+  - name: "llamastack-integration"
+    path: "notebooks/06-mcp-lightspeed-integration/llamastack-integration.ipynb"
+    description: "LlamaStack LLM integration"
+    sync_wave: "8"
+    tier: "tier3"
+
+# ==============================================================================
+# WAVE 9: MONITORING & OPERATIONS (Depends on all previous)
+# ==============================================================================
+notebooks_wave9_jobs:
+  - name: "prometheus-metrics-monitoring"
+    path: "notebooks/07-monitoring-operations/prometheus-metrics-monitoring.ipynb"
+    description: "Prometheus metrics monitoring"
+    sync_wave: "9"
+    tier: "tier2"
+  - name: "model-performance-monitoring"
+    path: "notebooks/07-monitoring-operations/model-performance-monitoring.ipynb"
+    description: "Model performance monitoring"
+    sync_wave: "9"
+    tier: "tier3"
+  - name: "healing-success-tracking"
+    path: "notebooks/07-monitoring-operations/healing-success-tracking.ipynb"
+    description: "Track healing success rates"
+    sync_wave: "9"
+    tier: "tier2"
+
+# ==============================================================================
+# WAVE 10: ADVANCED SCENARIOS (Final wave - depends on everything)
+# ==============================================================================
+notebooks_wave10_jobs:
+  - name: "multi-cluster-healing"
+    path: "notebooks/08-advanced-scenarios/multi-cluster-healing-coordination.ipynb"
+    description: "Multi-cluster healing coordination"
+    sync_wave: "10"
+    tier: "tier3"
+  - name: "predictive-scaling"
+    path: "notebooks/08-advanced-scenarios/predictive-scaling-capacity-planning.ipynb"
+    description: "Predictive scaling and capacity planning"
+    sync_wave: "10"
+    tier: "tier3"
+  - name: "security-incident-response"
+    path: "notebooks/08-advanced-scenarios/security-incident-response-automation.ipynb"
+    description: "Security incident response automation"
+    sync_wave: "10"
+    tier: "tier3"
+  - name: "cost-optimization"
+    path: "notebooks/08-advanced-scenarios/cost-optimization-resource-efficiency.ipynb"
+    description: "Cost optimization analysis"
+    sync_wave: "10"
+    tier: "tier2"
+
+# ==============================================================================
+# LEGACY TIER-BASED LISTS (For backward compatibility)
+# These are auto-generated from wave lists if not overridden
+# ==============================================================================
+notebooks_tier1_jobs: []
+notebooks_tier2_jobs: []
+notebooks_tier3_jobs: []
+
+# Legacy empty list (for backward compatibility)
+notebooks_validation_jobs: []

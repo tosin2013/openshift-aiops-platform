@@ -1,0 +1,270 @@
+name: Helm Chart Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'charts/**'
+      - 'values-*.yaml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'charts/**'
+      - 'values-*.yaml'
+
+jobs:
+  helm-lint:
+    name: Helm Lint and Template Validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Helm Lint - Hub Chart
+        run: |
+          helm lint charts/hub -f values-global.yaml -f values-hub.yaml
+
+      - name: Helm Template Test - Hub Chart
+        run: |
+          helm template self-healing-platform charts/hub \
+            -f values-global.yaml \
+            -f values-hub.yaml \
+            --namespace self-healing-platform \
+            --debug > /tmp/rendered-manifests.yaml
+          echo "✅ Helm template rendering successful"
+
+      - name: Validate Kubernetes Manifests (Optional - requires kubeconform)
+        continue-on-error: true
+        run: |
+          # Install kubeconform
+          wget https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar xf kubeconform-linux-amd64.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+
+          # Validate manifests
+          kubeconform -strict -ignore-missing-schemas /tmp/rendered-manifests.yaml
+
+      - name: Check for Kubernetes deprecations (pluto)
+        continue-on-error: true
+        run: |
+          # Install pluto
+          wget https://github.com/FairwindsOps/pluto/releases/latest/download/pluto_linux_amd64.tar.gz
+          tar xf pluto_linux_amd64.tar.gz
+          sudo mv pluto /usr/local/bin/
+
+          # Check for deprecated APIs
+          pluto detect /tmp/rendered-manifests.yaml
+
+      - name: Upload Rendered Manifests
+        uses: actions/upload-artifact@v5
+        with:
+          name: rendered-helm-manifests
+          path: /tmp/rendered-manifests.yaml
+          retention-days: 7
+
+      - name: Create Issue on Failure
+        if: failure()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const workflow_url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const issue_title = `🚨 Helm Validation Failed - ${context.workflow}`;
+            const issue_body = `## Helm Chart Validation Failure
+
+            **Workflow Run:** [#${context.runNumber}](${workflow_url})
+            **Branch:** \`${context.ref}\`
+            **Commit:** ${context.sha.substring(0, 7)} - ${context.payload.head_commit?.message || 'N/A'}
+            **Triggered by:** @${context.actor}
+            **Timestamp:** ${new Date().toISOString()}
+
+            ### Failure Details
+
+            One or more Helm validation checks failed:
+            - Helm lint check
+            - Helm template rendering
+            - Kubernetes manifest validation
+            - API deprecation check
+
+            ### Action Required
+
+            1. Review the [workflow logs](${workflow_url}) for detailed error messages
+            2. Fix the Helm chart issues locally:
+               \`\`\`bash
+               helm lint charts/hub -f values-global.yaml -f values-hub.yaml
+               helm template test charts/hub -f values-global.yaml -f values-hub.yaml
+               \`\`\`
+            3. Run pre-commit hooks before committing:
+               \`\`\`bash
+               pre-commit run --all-files
+               \`\`\`
+            4. Push the fix and verify the workflow passes
+
+            ### Related Files
+
+            Check these files for potential issues:
+            - \`charts/hub/Chart.yaml\`
+            - \`charts/hub/values.yaml\`
+            - \`charts/hub/templates/\`
+            - \`values-global.yaml\`
+            - \`values-hub.yaml\`
+
+            ---
+            🤖 *This issue was automatically created by the CI/CD pipeline*
+            `;
+
+            // Check if there's already an open issue for this workflow
+            const existingIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['helm-validation', 'ci-failure'],
+              per_page: 100
+            });
+
+            const duplicateIssue = existingIssues.data.find(issue =>
+              issue.title.includes('Helm Validation Failed')
+            );
+
+            if (duplicateIssue) {
+              // Add a comment to existing issue instead of creating new one
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: duplicateIssue.number,
+                body: `### ⚠️ Validation Still Failing\n\n${issue_body}`
+              });
+              console.log(`Added comment to existing issue #${duplicateIssue.number}`);
+            } else {
+              // Create new issue
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issue_title,
+                body: issue_body,
+                labels: ['helm-validation', 'ci-failure', 'bug']
+              });
+              console.log(`Created issue #${issue.data.number}`);
+            }
+
+  pre-commit:
+    name: Pre-commit Hooks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install pre-commit
+        run: |
+          pip install pre-commit
+
+      - name: Run pre-commit hooks
+        run: |
+          pre-commit run --all-files
+
+      - name: Create Issue on Pre-commit Failure
+        if: failure()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const workflow_url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const issue_title = `🚨 Pre-commit Hooks Failed - ${context.workflow}`;
+            const issue_body = `## Pre-commit Hooks Failure
+
+            **Workflow Run:** [#${context.runNumber}](${workflow_url})
+            **Branch:** \`${context.ref}\`
+            **Commit:** ${context.sha.substring(0, 7)}
+            **Triggered by:** @${context.actor}
+            **Timestamp:** ${new Date().toISOString()}
+
+            ### Failure Details
+
+            One or more pre-commit hooks failed. Common issues:
+            - YAML syntax errors
+            - Trailing whitespace
+            - Missing end-of-file newlines
+            - Secrets detected by Gitleaks
+            - YAML linting issues
+
+            ### Action Required
+
+            1. Review the [workflow logs](${workflow_url})
+            2. Run pre-commit locally to see detailed errors:
+               \`\`\`bash
+               pre-commit run --all-files
+               \`\`\`
+            3. Fix the issues and commit again
+            4. Pre-commit will auto-fix some issues (whitespace, EOF)
+
+            ### Useful Commands
+
+            \`\`\`bash
+            # Install pre-commit if not already installed
+            pip install pre-commit
+            pre-commit install
+
+            # Run all hooks
+            pre-commit run --all-files
+
+            # Run specific hook
+            pre-commit run helm-lint --all-files
+            pre-commit run yamllint --all-files
+            \`\`\`
+
+            ---
+            🤖 *This issue was automatically created by the CI/CD pipeline*
+            `;
+
+            const existingIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['pre-commit', 'ci-failure'],
+              per_page: 100
+            });
+
+            const duplicateIssue = existingIssues.data.find(issue =>
+              issue.title.includes('Pre-commit Hooks Failed')
+            );
+
+            if (duplicateIssue) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: duplicateIssue.number,
+                body: `### ⚠️ Pre-commit Still Failing\n\n${issue_body}`
+              });
+            } else {
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issue_title,
+                body: issue_body,
+                labels: ['pre-commit', 'ci-failure', 'bug']
+              });
+              console.log(`Created issue #${issue.data.number}`);
+            }

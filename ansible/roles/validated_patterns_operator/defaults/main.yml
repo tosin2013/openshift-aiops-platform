@@ -1,0 +1,49 @@
+---
+# Defaults for validated_patterns_operator role
+# This role wraps the Validated Patterns Operator for simplified end-user deployment
+
+# Validated Patterns Operator configuration
+vp_operator_namespace: "openshift-operators"
+vp_operator_name: "patterns-operator"
+vp_operator_channel: "fast"
+vp_operator_source: "community-operators"
+vp_operator_source_namespace: "openshift-marketplace"
+vp_operator_install_plan_approval: "Automatic"
+vp_operator_starting_csv: ""  # Leave empty for latest
+
+# Pattern configuration (from values-*.yaml files)
+validated_patterns_pattern_name: "validated-patterns-ansible-toolkit"
+validated_patterns_git_url: "https://github.com/tosin2013/validated-patterns-ansible-toolkit.git"
+validated_patterns_git_revision: "main"
+validated_patterns_target_namespace: "openshift-gitops"
+
+# Values files configuration
+validated_patterns_values_global: "values-global.yaml"
+validated_patterns_values_hub: "values-hub.yaml"
+validated_patterns_values_secrets: "values-secrets.yaml"
+
+# Timeouts (in seconds)
+vp_operator_install_timeout: 300
+vp_pattern_deploy_timeout: 600
+vp_gitops_ready_timeout: 600
+vp_clustergroup_ready_timeout: 900
+
+# Retry configuration
+vp_operator_install_retries: 30
+vp_operator_install_delay: 10
+vp_gitops_ready_retries: 60
+vp_gitops_ready_delay: 10
+vp_clustergroup_ready_retries: 90
+vp_clustergroup_ready_delay: 10
+
+# Health check configuration
+vp_validate_deployment: true
+vp_validate_gitops: true
+vp_validate_clustergroup: true
+
+# Pre-deployment validation configuration
+vp_validate_prerequisites: true
+vp_min_openshift_version: "4.18"
+
+# Debug mode
+vp_debug_mode: false

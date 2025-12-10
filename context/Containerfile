@@ -1,0 +1,167 @@
+ARG EE_BASE_IMAGE="registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9:latest"
+ARG PYCMD="/usr/bin/python3"
+ARG PKGMGR_PRESERVE_CACHE=""
+ARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS="--ignore-certs"
+ARG ANSIBLE_GALAXY_CLI_ROLE_OPTS=""
+ARG ANSIBLE_INSTALL_REFS="ansible-core>=2.15.13 ansible-runner==2.4.1"
+ARG PKGMGR="/usr/bin/microdnf"
+
+# Base build stage
+FROM $EE_BASE_IMAGE AS base
+USER root
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ARG EE_BASE_IMAGE
+ARG PYCMD
+ARG PKGMGR_PRESERVE_CACHE
+ARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS
+ARG ANSIBLE_GALAXY_CLI_ROLE_OPTS
+ARG ANSIBLE_INSTALL_REFS
+ARG PKGMGR
+
+COPY _build/scripts/ /output/scripts/
+COPY _build/scripts/entrypoint /opt/builder/bin/entrypoint
+RUN whoami
+RUN cat /etc/os-release
+RUN echo PKGMGR = $PKGMGR, PYCMD = $PYCMD
+RUN $PYCMD -m pip install --upgrade pip
+COPY _build/configs/optional /_extras/optional
+RUN RH_ENV="/_extras/optional/rhsm-activation.env" ; \
+    if [ -f "$RH_ENV" ]; then set -a; . "$RH_ENV"; set +a; fi ; \
+    if [ -n "$RH_ORG" ] && [ -n "$RH_ACT_KEY" ]; then \
+      echo "==> Enabling OpenShift client repo via RHSM" && \
+      (command -v subscription-manager >/dev/null 2>&1 || $PKGMGR -y install subscription-manager || true) && \
+      subscription-manager register --org="$RH_ORG" --activationkey="$RH_ACT_KEY" && \
+      subscription-manager attach --auto || true && \
+      ARCH=$(uname -m) && \
+      (subscription-manager repos --enable="rhocp-4.18-for-rhel-9-${ARCH}-rpms" || \
+       subscription-manager repos --enable="rhocp-4.17-for-rhel-9-${ARCH}-rpms" || true) && \
+      ($PKGMGR -y install openshift-clients || true) ; \
+    else \
+      echo "==> Skipping OpenShift client repo enable (no RH_ORG/RH_ACT_KEY provided)" ; \
+    fi
+
+RUN OC_ENV="/_extras/optional/oc-install.env" ; \
+    if [ -f "$OC_ENV" ]; then set -a; . "$OC_ENV"; set +a; fi ; \
+    if [ -n "$OC_URL" ] || [ -n "$OC_VERSION" ]; then \
+      echo "==> Installing oc/kubectl from tarball" && \
+      echo "    OC_VERSION=$OC_VERSION" && \
+      echo "    OC_URL=$OC_URL" && \
+      URL="${OC_URL:-https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSION}/openshift-client-linux.tar.gz}" && \
+      echo "    Final URL=$URL" && \
+      ($PKGMGR -y remove curl-minimal || true) && \
+      ($PKGMGR -y install curl tar || true) && \
+      echo "==> Downloading tarball..." && \
+      curl -L -v -o /tmp/oc.tgz "$URL" 2>&1 | tail -20 && \
+      echo "==> Extracting tarball..." && \
+      tar -C /usr/local/bin -xzf /tmp/oc.tgz oc kubectl && \
+      echo "==> Setting executable permissions..." && \
+      chmod +x /usr/local/bin/oc /usr/local/bin/kubectl && \
+      echo "==> Creating symlinks in /usr/bin for compatibility..." && \
+      ln -sf /usr/local/bin/oc /usr/bin/oc && \
+      ln -sf /usr/local/bin/kubectl /usr/bin/kubectl && \
+      echo "==> Verifying installation..." && \
+      /usr/local/bin/oc version --client && \
+      /usr/local/bin/kubectl version --client && \
+      echo "==> Cleanup..." && \
+      rm -f /tmp/oc.tgz ; \
+    else \
+      echo "==> Skipping oc/kubectl install (no OC_URL/OC_VERSION)" ; \
+    fi
+
+RUN echo "==> Installing Helm CLI..." && \
+    ($PKGMGR -y install wget tar || true) && \
+    wget -O /tmp/get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && \
+    chmod 700 /tmp/get_helm.sh && \
+    /tmp/get_helm.sh && \
+    echo "==> Verifying Helm installation..." && \
+    helm version --client && \
+    echo "==> Cleanup..." && \
+    rm -f /tmp/get_helm.sh || true
+
+RUN /output/scripts/pip_install $PYCMD
+RUN $PYCMD -m pip install --no-cache-dir $ANSIBLE_INSTALL_REFS
+
+# Galaxy build stage
+FROM base AS galaxy
+ARG EE_BASE_IMAGE
+ARG PYCMD
+ARG PKGMGR_PRESERVE_CACHE
+ARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS
+ARG ANSIBLE_GALAXY_CLI_ROLE_OPTS
+ARG ANSIBLE_INSTALL_REFS
+ARG PKGMGR
+
+COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
+RUN /output/scripts/check_galaxy
+COPY _build /build
+WORKDIR /build
+
+RUN mkdir -p /usr/share/ansible
+RUN ansible-galaxy role install $ANSIBLE_GALAXY_CLI_ROLE_OPTS -r requirements.yml --roles-path "/usr/share/ansible/roles"
+RUN ANSIBLE_GALAXY_DISABLE_GPG_VERIFY=1 ansible-galaxy collection install $ANSIBLE_GALAXY_CLI_COLLECTION_OPTS -r requirements.yml --collections-path "/usr/share/ansible/collections"
+
+# Builder build stage
+FROM base AS builder
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+WORKDIR /build
+ARG EE_BASE_IMAGE
+ARG PYCMD
+ARG PKGMGR_PRESERVE_CACHE
+ARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS
+ARG ANSIBLE_GALAXY_CLI_ROLE_OPTS
+ARG ANSIBLE_INSTALL_REFS
+ARG PKGMGR
+
+RUN $PYCMD -m pip install --no-cache-dir bindep pyyaml packaging
+# Patch assemble script to filter openshift-clients (ansible-builder overwrites our custom script)
+# This must run AFTER scripts are copied but BEFORE assemble is executed
+# Filter compile_packages in assemble script
+RUN sed -i '/compile_packages=$(bindep -b compile || true)/a\        # Filter out packages we satisfy via non-RPM methods\n        compile_packages=$(echo "$compile_packages" | sed '\''/^openshift-clients$/d'\'' | tr '\''\\n'\'' '\'' '\'' | sed '\''s/^[[:space:]]*//;s/[[:space:]]*$//'\'')' /output/scripts/assemble || true
+# Patch assemble script to filter openshift-clients from bindep/run.txt AFTER introspect regenerates it
+# Filter after install_bindep function writes to /output/bindep/run.txt (after line 29 in function)
+RUN sed -i '/bindep -l newline | sort >> \/output\/bindep\/run.txt/a\        # Filter openshift-clients added by collections\n        if [ -f /output/bindep/run.txt ]; then sed -i '\''/^openshift-clients$/d'\'' /output/bindep/run.txt || true; fi' /output/scripts/assemble || true
+RUN sed -i '/bindep -l newline -b epel | sort >> \/output\/bindep\/epel.txt/a\        # Filter openshift-clients from epel.txt\n        if [ -f /output/bindep/epel.txt ]; then sed -i '\''/^openshift-clients$/d'\'' /output/bindep/epel.txt || true; fi' /output/scripts/assemble || true
+
+COPY --from=galaxy /usr/share/ansible /usr/share/ansible
+
+COPY _build/requirements.txt requirements.txt
+COPY _build/bindep.txt bindep.txt
+RUN $PYCMD /output/scripts/introspect.py introspect --user-pip=requirements.txt --user-bindep=bindep.txt --write-bindep=/tmp/src/bindep.txt --write-pip=/tmp/src/requirements.txt
+RUN /output/scripts/assemble
+
+# Final build stage
+FROM base AS final
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ARG EE_BASE_IMAGE
+ARG PYCMD
+ARG PKGMGR_PRESERVE_CACHE
+ARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS
+ARG ANSIBLE_GALAXY_CLI_ROLE_OPTS
+ARG ANSIBLE_INSTALL_REFS
+ARG PKGMGR
+
+RUN /output/scripts/check_ansible $PYCMD
+
+COPY --from=galaxy /usr/share/ansible /usr/share/ansible
+
+COPY --from=builder /output/ /output/
+RUN /output/scripts/install-from-bindep && rm -rf /output/wheels
+RUN chmod ug+rw /etc/passwd
+RUN mkdir -p /runner && chgrp 0 /runner && chmod -R ug+rwx /runner
+WORKDIR /runner
+RUN $PYCMD -m pip install --no-cache-dir 'dumb-init==1.2.5'
+RUN pip3 check
+RUN if command -v subscription-manager >/dev/null 2>&1; then \
+      subscription-manager unregister || true && \
+      subscription-manager clean || true && \
+      rm -f /etc/yum.repos.d/redhat.repo && \
+      rm -rf /etc/rhsm/* ; \
+    fi
+
+RUN $PKGMGR update -y && $PKGMGR clean all && rm -rf /var/cache/{dnf,yum} && rm -rf /var/lib/dnf/history.* && rm -rf /var/log/*
+
+RUN rm -rf /output
+LABEL ansible-execution-environment=true
+USER 1000
+ENTRYPOINT ["/opt/builder/bin/entrypoint", "dumb-init"]
+CMD ["bash"]

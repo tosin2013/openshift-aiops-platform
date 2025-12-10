@@ -1,0 +1,131 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: self-healing-platform-development
+
+# Base configuration
+resources:
+  - ../../base
+
+# Development-specific namespace suffix
+nameSuffix: -dev
+
+# Development-specific labels
+labels:
+  - pairs:
+      environment: development
+      tier: non-production
+
+# Development-specific annotations
+commonAnnotations:
+  deployment.environment: development
+  contact.team: platform-engineering
+  cost.center: development
+
+# Resource patches for development
+patches:
+  # Reduce resource requirements for development
+  - target:
+      kind: Deployment
+      name: coordination-engine
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "100m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "256Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "512Mi"
+
+  # Reduce storage requirements for development
+  - target:
+      kind: PersistentVolumeClaim
+      name: self-healing-data
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: "5Gi"
+      - op: replace
+        path: /spec/storageClassName
+        value: "gp3-csi"
+
+  - target:
+      kind: PersistentVolumeClaim
+      name: model-artifacts
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: "10Gi"
+      - op: replace
+        path: /spec/storageClassName
+        value: "ocs-storagecluster-cephfs"
+
+  # Remove GPU requirements for development (CPU-only)
+  - target:
+      kind: Notebook
+      name: self-healing-workbench
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/nvidia.com~1gpu
+      - op: remove
+        path: /spec/template/spec/affinity
+
+  - target:
+      kind: InferenceService
+      name: predictive-analytics
+    patch: |-
+      - op: remove
+        path: /spec/predictor/sklearn/resources/limits/nvidia.com~1gpu
+
+  # Fix PVC references in workbench to use -dev suffix
+  - target:
+      kind: Notebook
+      name: self-healing-workbench
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/volumes/0/persistentVolumeClaim/claimName
+        value: "self-healing-data-dev"
+      - op: replace
+        path: /spec/template/spec/volumes/1/persistentVolumeClaim/claimName
+        value: "model-artifacts-dev"
+      - op: replace
+        path: /spec/template/spec/volumes/2/configMap/name
+        value: "jupyter-config-dev"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/5/valueFrom/secretKeyRef/name
+        value: "model-storage-config-dev-d5m947cbc5"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/6/valueFrom/secretKeyRef/name
+        value: "model-storage-config-dev-d5m947cbc5"
+
+# Development-specific ConfigMap overrides
+configMapGenerator:
+  - name: platform-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=DEBUG
+      - METRICS_PORT=8090
+      - COORDINATION_ENGINE_PORT=8080
+      - MODEL_SERVING_TIMEOUT=60s
+      - PROMETHEUS_SCRAPE_INTERVAL=15s
+      - DEVELOPMENT_MODE=true
+
+# Development-specific images (can use latest or development tags)
+images:
+  - name: coordination-engine
+    newName: registry.redhat.io/ubi8/python-39
+    newTag: latest
+  - name: jupyter-workbench
+    newName: quay.io/opendatahub/workbench-images
+    newTag: jupyter-datascience-c9s-py311_2024a_20240301
+
+# Replicas for development (single instance)
+replicas:
+  - name: coordination-engine
+    count: 1

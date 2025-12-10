@@ -1,0 +1,56 @@
+---
+# Main tasks for validated_patterns_common role
+# Purpose: Deploy validatedpatterns/common with multisource architecture
+#
+# When validated_patterns_use_operator=true (operator-deploy workflow):
+#   - Skips clustergroup-chart deployment (Helm pattern-install handles it)
+#   - Only deploys Helm repos, ESO, and other infrastructure prereqs
+#
+# When validated_patterns_use_operator=false (end2end-deployment workflow):
+#   - Deploys clustergroup-chart via Ansible
+#   - Waits for ArgoCD Applications to sync
+
+- name: Display role purpose
+  debug:
+    msg: |
+      Deploying validatedpatterns/common with multisource architecture
+      Operator workflow: {{ validated_patterns_use_operator | default(false) }}
+      {% if validated_patterns_use_operator | default(false) %}
+      (Skipping clustergroup-chart - operator-deploy handles it)
+      {% endif %}
+
+- name: Include rhvp.cluster_utils collection installation
+  include_tasks: install_collection.yml
+
+- name: Include Helm repository configuration
+  include_tasks: configure_helm_repos.yml
+
+# Only deploy clustergroup-chart when NOT using operator-deploy workflow
+# operator-deploy uses Helm pattern-install chart which handles this
+- name: Include clustergroup-chart deployment
+  include_tasks: deploy_clustergroup_chart.yml
+  when: not (validated_patterns_use_operator | default(false) | bool)
+
+- name: Skip clustergroup-chart message (operator workflow)
+  debug:
+    msg: |
+      ℹ️  Skipping clustergroup-chart deployment
+      The pattern-install Helm chart will deploy clustergroup via operator-deploy.
+  when: validated_patterns_use_operator | default(false) | bool
+
+- name: Include External Secrets Operator deployment
+  include_tasks: deploy_external_secrets_operator.yml
+
+- name: Display deployment summary
+  debug:
+    msg: |
+      ✅ validatedpatterns/common deployed successfully!
+      - rhvp.cluster_utils collection installed
+      - Helm repositories configured
+      {% if not (validated_patterns_use_operator | default(false)) %}
+      - clustergroup-chart v0.9.* deployed
+      {% else %}
+      - clustergroup-chart: SKIPPED (operator-deploy handles this)
+      {% endif %}
+      - Multisource configuration enabled
+      - External Secrets Operator deployed

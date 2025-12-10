@@ -1,0 +1,38 @@
+# Pattern Operator Resource Patch
+# Issue: Pattern operator pod crashes during large repository clones due to memory limits and health probe timeouts
+# Fix: Increase memory limits from 512Mi to 2Gi and extend health probe timeouts
+# Applied via: oc patch deployment patterns-operator-controller-manager -n openshift-operators --patch-file=this-file.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patterns-operator-controller-manager
+  namespace: openshift-operators
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          resources:
+            requests:
+              cpu: 10m
+              memory: 256Mi  # Increased from 64Mi
+            limits:
+              cpu: 500m
+              memory: 2Gi    # Increased from 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 60    # Increased from 15
+            timeoutSeconds: 10          # Increased from 1
+            periodSeconds: 60           # Increased from 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 30    # Increased from 5
+            timeoutSeconds: 10          # Increased from 1
+            periodSeconds: 30           # Increased from 10
+            failureThreshold: 3

@@ -1,0 +1,18 @@
+---
+# Defaults for validated_patterns_gitea role
+
+# Gitea configuration
+gitea_namespace: "gitea"
+gitea_operator_namespace: "gitea-operator"
+gitea_instance_name: "gitea-with-admin"
+
+# Admin user
+gitea_admin_user: "opentlc-mgr"
+gitea_admin_email: "opentlc-mgr@redhat.com"
+
+# Lab users
+gitea_user_format: "lab-user"
+gitea_user_count: 1
+
+# SSL configuration
+gitea_ssl_enabled: true

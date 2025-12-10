@@ -1,0 +1,35 @@
+---
+# ClusterRole for Jupyter Notebook Validator Operator to access Tekton resources
+# Required when using buildConfig.strategy: tekton in NotebookValidationJob
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jupyter-notebook-validator-tekton-access
+  labels:
+    app.kubernetes.io/name: jupyter-notebook-validator-operator
+    app.kubernetes.io/component: tekton-integration
+rules:
+- apiGroups: ["tekton.dev"]
+  resources: ["pipelineruns", "taskruns", "pipelines", "tasks"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["tekton.dev"]
+  resources: ["pipelineruns/status", "taskruns/status"]
+  verbs: ["get", "update", "patch"]
+
+---
+# ClusterRoleBinding for Jupyter Notebook Validator Operator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jupyter-notebook-validator-tekton-access
+  labels:
+    app.kubernetes.io/name: jupyter-notebook-validator-operator
+    app.kubernetes.io/component: tekton-integration
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jupyter-notebook-validator-tekton-access
+subjects:
+- kind: ServiceAccount
+  name: {{ notebooks_operator_service_account | default('jupyter-notebook-validator-operator') }}
+  namespace: {{ notebooks_operator_namespace | default('jupyter-notebook-validator-system') }}

@@ -1,0 +1,51 @@
+---
+# Create PVCs for Tekton build workspaces
+# Required when using buildConfig.strategy: tekton in NotebookValidationJob
+
+- name: Check if Tekton Pipelines is installed
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: openshift-pipelines
+  register: tekton_namespace
+  failed_when: false
+
+- name: Create Tekton build workspace PVCs (if Tekton is installed)
+  when: tekton_namespace.resources | length > 0
+  block:
+    - name: Apply Tekton build PVC templates
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'tekton-build-pvcs.yaml.j2') }}"
+      register: tekton_pvcs_result
+
+    - name: Display Tekton PVC creation result
+      ansible.builtin.debug:
+        msg: "Tekton build workspace PVCs created in {{ notebooks_namespace }}"
+      when: tekton_pvcs_result is changed
+
+    # Note: PVCs using WaitForFirstConsumer will not bind until a pod uses them
+    # Skip waiting - they will bind when NotebookValidationJob creates pods
+    - name: Verify PVCs were created (not waiting for bind)
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: "{{ item }}"
+        namespace: "{{ notebooks_namespace }}"
+      register: pvc_status
+      failed_when: pvc_status.resources | length == 0
+      loop:
+        - tier1-build-workspace
+        - tier2-build-workspace
+        - tier3-build-workspace
+      when: tekton_pvcs_result is changed
+
+    - name: Display PVC status
+      ansible.builtin.debug:
+        msg: "PVCs created with WaitForFirstConsumer - will bind when NotebookValidationJobs run"
+      when: tekton_pvcs_result is changed
+
+- name: Tekton not installed
+  ansible.builtin.debug:
+    msg: "Tekton Pipelines not found - skipping Tekton build PVC creation"
+  when: tekton_namespace.resources | length == 0

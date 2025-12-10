@@ -1,0 +1,23 @@
+---
+# Health checks
+
+- name: Check cluster health
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Node
+  register: nodes_health
+
+- name: Validate node health
+  assert:
+    that:
+      - nodes_health.resources | length > 0
+    fail_msg: "No healthy nodes found"
+    success_msg: "✅ Cluster health: Healthy"
+
+- name: Display health check status
+  debug:
+    msg: |
+      ✅ Health checks passed:
+      - Cluster: Healthy
+      - Nodes: {{ nodes_health.resources | length }}
+      - Status: Ready

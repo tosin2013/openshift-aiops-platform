@@ -1,0 +1,277 @@
+---
+# E2E Test for Complete Pattern Deployment (Development Workflow)
+# Purpose: Test ansible/playbooks/deploy_complete_pattern.yml
+# Framework: Validated Patterns (AGENTS.md guidelines)
+# Reference: ADR-019 - Validated Patterns Framework Adoption
+
+- name: E2E Test - Complete Pattern Deployment (Development Workflow)
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    # Test configuration
+    pattern_name: "self-healing-platform"
+    pattern_namespace: "self-healing-platform"
+    test_timeout: 1800  # 30 minutes
+
+    # Cleanup configuration (retains shared infrastructure)
+    cleanup_gitops: false      # Keep ArgoCD (from common/ subtree)
+    cleanup_gitea: false        # Keep Gitea (for development)
+    cleanup_operator: false     # Keep VP Operator (reusable)
+    cleanup_pattern_name: "{{ pattern_name }}"
+    cleanup_pattern_namespace: "{{ pattern_namespace }}"
+    cleanup_debug: true
+
+    # Deployment configuration
+    enable_operator: false      # Development workflow (not operator)
+    enable_gitea: false
+    enable_secrets_mgmt: true
+    enable_validation: true
+
+  pre_tasks:
+    - name: Display test information
+      debug:
+        msg: |
+          ========================================
+          E2E Test: Complete Pattern Deployment
+          ========================================
+          Test: Development Workflow (ansible/playbooks/deploy_complete_pattern.yml)
+          Pattern: {{ pattern_name }}
+          Namespace: {{ pattern_namespace }}
+          Timeout: {{ test_timeout }}s
+
+          Test Sequence:
+          1. Pre-test cleanup (retains GitOps/Gitea/Operator)
+          2. Deploy complete pattern (development workflow)
+          3. Validate deployment health
+          4. Execute infrastructure validation notebook
+          5. Post-test verification
+          6. Post-test cleanup (optional)
+          ========================================
+
+    - name: Verify cluster connectivity
+      kubernetes.core.k8s_info:
+        kind: Namespace
+        name: default
+      register: cluster_check
+      failed_when: cluster_check.resources | length == 0
+
+    - name: Display cluster connection status
+      debug:
+        msg: "✅ Connected to OpenShift cluster"
+
+  tasks:
+    # ========================================
+    # Step 1: Pre-Test Cleanup (MANDATORY)
+    # ========================================
+    - name: Pre-test cleanup
+      include_role:
+        name: validated_patterns_cleanup
+      vars:
+        # Pass non-recursive variables only
+        cleanup_pattern_name: "{{ pattern_name }}"
+        cleanup_pattern_namespace: "{{ pattern_namespace }}"
+        # cleanup_gitops, cleanup_gitea, cleanup_operator, cleanup_debug
+        # are inherited from playbook vars (avoid recursion)
+      tags: ['cleanup', 'pre-test']
+
+    - name: Display pre-test cleanup status
+      debug:
+        msg: |
+          ✅ Pre-test cleanup complete
+          - Pattern resources: Removed
+          - ArgoCD applications: Removed
+          - Application namespaces: Removed
+          - Shared infrastructure: Retained (GitOps, Gitea, Operator)
+      tags: ['cleanup', 'pre-test']
+
+    # ========================================
+    # Step 2: Deploy Complete Pattern (Development Workflow)
+    # ========================================
+    - name: Deploy complete pattern using development workflow
+      command: >
+        ansible-playbook
+        {{ playbook_dir }}/../../../ansible/playbooks/deploy_complete_pattern.yml
+        -e "enable_operator={{ enable_operator }}"
+        -e "enable_gitea={{ enable_gitea }}"
+        -e "enable_secrets_mgmt={{ enable_secrets_mgmt }}"
+        -e "enable_validation={{ enable_validation }}"
+      environment:
+        ANSIBLE_ROLES_PATH: "{{ playbook_dir }}/../../../ansible/roles"
+      register: deployment_result
+      failed_when: deployment_result.rc != 0
+      tags: ['deploy']
+      async: "{{ test_timeout }}"
+      poll: 30
+
+    - name: Display deployment result
+      debug:
+        var: deployment_result.stdout_lines
+      tags: ['deploy']
+
+    # ========================================
+    # Step 3: Validate Deployment
+    # ========================================
+    - name: Wait for namespace to be ready
+      kubernetes.core.k8s_info:
+        kind: Namespace
+        name: "{{ pattern_namespace }}"
+      register: namespace_check
+      until: namespace_check.resources | length > 0
+      retries: 10
+      delay: 5
+      tags: ['validate']
+
+    - name: Check ArgoCD Application status
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: "{{ pattern_name }}"
+        namespace: "{{ pattern_namespace }}-hub"
+      register: argocd_app
+      tags: ['validate']
+
+    - name: Display ArgoCD Application status
+      debug:
+        msg: |
+          ArgoCD Application Status:
+          - Name: {{ pattern_name }}
+          - Namespace: {{ pattern_namespace }}-hub
+          - Found: {{ argocd_app.resources | length > 0 }}
+          {% if argocd_app.resources | length > 0 %}
+          - Sync Status: {{ argocd_app.resources[0].status.sync.status | default('Unknown') }}
+          - Health Status: {{ argocd_app.resources[0].status.health.status | default('Unknown') }}
+          {% endif %}
+      tags: ['validate']
+
+    - name: Get all pods in pattern namespace
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ pattern_namespace }}"
+      register: pods_check
+      tags: ['validate']
+
+    - name: Display pod status
+      debug:
+        msg: |
+          Pods in {{ pattern_namespace }}:
+          {% for pod in pods_check.resources %}
+          - {{ pod.metadata.name }}: {{ pod.status.phase }}
+          {% endfor %}
+          Total pods: {{ pods_check.resources | length }}
+      tags: ['validate']
+
+    - name: Validate cluster-scoped resources were deployed
+      kubernetes.core.k8s_info:
+        kind: ClusterRole
+        name: self-healing-workbench-cluster
+      register: cluster_role_check
+      tags: ['validate']
+
+    - name: Display cluster resources status
+      debug:
+        msg: |
+          Cluster-Scoped Resources:
+          - ClusterRole (self-healing-workbench-cluster): {{ 'Found' if cluster_role_check.resources | length > 0 else 'Not Found' }}
+          {% if cluster_role_check.resources | length > 0 %}
+          ✅ Hybrid Management Model: Cluster resources deployed correctly
+          {% else %}
+          ⚠️ Hybrid Management Model: Cluster resources may not be deployed
+          {% endif %}
+      tags: ['validate']
+
+    # ========================================
+    # Step 4: Execute Validation Tasks (Reuse specific task files)
+    # ========================================
+    - name: Validate OpenShift version
+      include_tasks: ../../../ansible/roles/validated_patterns_prerequisites/tasks/check_openshift_version.yml
+      tags: ['validate', 'health']
+
+    - name: Validate cluster health
+      include_tasks: ../../../ansible/roles/validated_patterns_validate/tasks/validate_health.yml
+      tags: ['validate', 'health']
+      ignore_errors: yes
+
+    # ========================================
+    # Step 5: Post-Test Verification
+    # ========================================
+    - name: Gather final deployment status
+      block:
+        - name: Get all resources in namespace
+          command: oc get all -n {{ pattern_namespace }}
+          register: all_resources
+          changed_when: false
+          failed_when: false
+
+        - name: Get ArgoCD applications
+          command: oc get applications -n {{ pattern_namespace }}-hub
+          register: argocd_apps
+          changed_when: false
+          failed_when: false
+
+        - name: Get cluster-scoped resources
+          command: oc get clusterroles,clusterrolebindings -l app.kubernetes.io/part-of={{ pattern_name }}
+          register: cluster_resources
+          changed_when: false
+          failed_when: false
+      tags: ['verify']
+
+    - name: Display test summary
+      debug:
+        msg: |
+          ========================================
+          E2E Test Summary
+          ========================================
+          Pattern: {{ pattern_name }}
+          Namespace: {{ pattern_namespace }}
+          Deployment: {{ 'SUCCESS' if deployment_result.rc == 0 else 'FAILED' }}
+
+          Resources Deployed:
+          {{ all_resources.stdout if all_resources.rc == 0 else 'Unable to retrieve resources' }}
+
+          ArgoCD Applications:
+          {{ argocd_apps.stdout if argocd_apps.rc == 0 else 'Unable to retrieve applications' }}
+
+          Cluster-Scoped Resources:
+          {{ cluster_resources.stdout if cluster_resources.rc == 0 else 'No cluster resources found' }}
+
+          Test Status: {% if deployment_result.rc == 0 %}✅ PASSED{% else %}❌ FAILED{% endif %}
+          ========================================
+      tags: ['verify']
+
+  post_tasks:
+    - name: Post-test cleanup (optional)
+      include_role:
+        name: validated_patterns_cleanup
+      vars:
+        # Pass non-recursive variables only
+        cleanup_pattern_name: "{{ pattern_name }}"
+        cleanup_pattern_namespace: "{{ pattern_namespace }}"
+        # cleanup_gitops, cleanup_gitea, cleanup_operator
+        # are inherited from playbook vars (avoid recursion)
+      when: cleanup_after_test | default(false) | bool
+      tags: ['cleanup', 'post-test']
+
+    - name: Display test completion status
+      debug:
+        msg: |
+          ========================================
+          E2E Test Complete
+          ========================================
+          {% if cleanup_after_test | default(false) %}
+          ✅ Post-test cleanup completed
+          {% else %}
+          ℹ️  Post-test cleanup skipped (set cleanup_after_test=true to enable)
+          {% endif %}
+
+          Next Steps:
+          1. Review ArgoCD UI:
+             oc get route openshift-gitops-server -n openshift-gitops
+
+          2. Check application health:
+             oc get pods -n {{ pattern_namespace }}
+
+          3. Manual cleanup (if needed):
+             ansible-playbook ansible/playbooks/cleanup_pattern.yml
+          ========================================
+      tags: ['summary']

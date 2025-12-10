@@ -1,0 +1,52 @@
+---
+# Check storage configuration
+
+- name: Get storage classes
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: StorageClass
+  register: storage_classes
+  failed_when: storage_classes.resources | length == 0
+
+- name: Find default storage class
+  set_fact:
+    default_storage_class: >-
+      {% set ns = namespace(found=[]) %}
+      {% for sc in storage_classes.resources %}
+        {% if sc.metadata.annotations is defined and 'storageclass.kubernetes.io/is-default-class' in sc.metadata.annotations %}
+          {% set _ = ns.found.append(sc) %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.found }}
+
+- name: Display found storage classes
+  debug:
+    msg: "Found {{ storage_classes.resources | length }} storage classes, {{ default_storage_class | length }} marked as default"
+
+- name: Validate default storage class exists
+  assert:
+    that:
+      - default_storage_class | length > 0
+    fail_msg: "No default storage class found. Please configure one."
+    success_msg: "✅ Default storage class is configured"
+
+- name: Display storage class information
+  debug:
+    msg: |
+      Storage Classes:
+      {% for sc in storage_classes.resources %}
+      - {{ sc.metadata.name }}{% if sc.metadata.annotations is defined and 'storageclass.kubernetes.io/is-default-class' in sc.metadata.annotations %} (default){% endif %}
+      {% endfor %}
+
+- name: Check PVC creation capability (list PVCs)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: PersistentVolumeClaim
+    namespace: default
+  register: pvc_test
+  failed_when: false
+  ignore_errors: yes
+
+- name: Display PVC creation capability
+  debug:
+    msg: "{{ '✅ PVC operations are available' if pvc_test.resources is defined else 'ℹ️  Limited PVC permissions' }}"

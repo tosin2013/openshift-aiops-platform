@@ -1,0 +1,206 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Cluster Health Overview",
+    "tags": ["cluster", "health", "openshift", "overview"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Cluster Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"kubernetes-apiservers\"}",
+            "legendFormat": "API Server"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+              {"options": {"1": {"text": "UP"}}, "type": "value"}
+            ]
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Node Count",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(kube_node_info)",
+            "legendFormat": "Total Nodes"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Pod Count",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(kube_pod_info)",
+            "legendFormat": "Total Pods"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "Namespace Count",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(kube_namespace_created)",
+            "legendFormat": "Namespaces"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "id": 5,
+        "title": "CPU Usage by Node",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "(1 - rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100",
+            "legendFormat": "{{instance}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "CPU Usage %", "min": 0, "max": 100}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 6,
+        "title": "Memory Usage by Node",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+            "legendFormat": "{{instance}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "Memory Usage %", "min": 0, "max": 100}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 7,
+        "title": "Pod Status Distribution",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (phase) (kube_pod_status_phase)",
+            "legendFormat": "{{phase}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16}
+      },
+      {
+        "id": 8,
+        "title": "Network I/O",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(node_network_receive_bytes_total[5m])",
+            "legendFormat": "{{device}} - RX"
+          },
+          {
+            "expr": "rate(node_network_transmit_bytes_total[5m])",
+            "legendFormat": "{{device}} - TX"
+          }
+        ],
+        "yAxes": [
+          {"label": "Bytes/sec", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16}
+      },
+      {
+        "id": 9,
+        "title": "Disk Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "(1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100",
+            "legendFormat": "{{mountpoint}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "Disk Usage %", "min": 0, "max": 100}
+        ],
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16}
+      },
+      {
+        "id": 10,
+        "title": "Container Restarts",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(kube_pod_container_status_restarts_total[5m])",
+            "legendFormat": "{{namespace}}/{{pod}}/{{container}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "Restarts/sec", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
+      },
+      {
+        "id": 11,
+        "title": "API Server Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(apiserver_request_total[5m])",
+            "legendFormat": "{{verb}} {{resource}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "Requests/sec", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}
+      },
+      {
+        "id": 12,
+        "title": "Etcd Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m]))",
+            "legendFormat": "99th percentile fsync"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket[5m]))",
+            "legendFormat": "99th percentile commit"
+          }
+        ],
+        "yAxes": [
+          {"label": "Duration (seconds)", "min": 0}
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32}
+      }
+    ]
+  }
+}

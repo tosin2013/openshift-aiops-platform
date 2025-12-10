@@ -1,0 +1,121 @@
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: platform-readiness-validation-pipeline
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: platform-readiness-validation-pipeline
+    app.kubernetes.io/component: validation
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  description: |
+    Validate platform infrastructure readiness before notebook execution
+
+    This pipeline executes the platform readiness validation notebook to verify
+    all platform components are operational and accessible.
+
+    References:
+    - ADR-029: Infrastructure Validation Notebook for User Readiness
+    - ADR-027: CI/CD Pipeline Automation with Tekton and ArgoCD
+    - ADR-021: Tekton Pipeline for Post-Deployment Validation
+
+  params:
+    - name: git-url
+      description: Git repository URL
+      type: string
+      default: "https://github.com/tosin2013/openshift-aiops-platform.git"
+
+    - name: git-revision
+      description: Git revision (branch, tag, or commit)
+      type: string
+      default: "main"
+
+    - name: notebook-path
+      description: Path to validation notebook
+      type: string
+      default: "notebooks/00-setup/00-platform-readiness-validation.ipynb"
+
+  workspaces:
+    - name: shared-workspace
+      description: Workspace for cloning repository and storing artifacts
+
+  tasks:
+    - name: platform-readiness-validation
+      taskRef:
+        name: platform-readiness-validation
+      params:
+        - name: git-url
+          value: $(params.git-url)
+        - name: git-revision
+          value: $(params.git-revision)
+        - name: notebook-path
+          value: $(params.notebook-path)
+        - name: output-path
+          value: "/workspace/source/validation-report.json"
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+  results:
+    - name: validation-status
+      description: Overall validation status (PASSED/FAILED/DEGRADED)
+      value: $(tasks.platform-readiness-validation.results.validation-status)
+
+    - name: checks-passed
+      description: Number of checks passed
+      value: $(tasks.platform-readiness-validation.results.checks-passed)
+
+    - name: checks-failed
+      description: Number of checks failed
+      value: $(tasks.platform-readiness-validation.results.checks-failed)
+
+    - name: checks-warnings
+      description: Number of checks with warnings
+      value: $(tasks.platform-readiness-validation.results.checks-warnings)
+
+    - name: report-path
+      description: Path to JSON validation report
+      value: $(tasks.platform-readiness-validation.results.report-path)
+
+  finally:
+    - name: print-summary
+      params:
+        - name: validation-status
+          value: $(tasks.platform-readiness-validation.results.validation-status)
+        - name: checks-passed
+          value: $(tasks.platform-readiness-validation.results.checks-passed)
+        - name: checks-failed
+          value: $(tasks.platform-readiness-validation.results.checks-failed)
+        - name: checks-warnings
+          value: $(tasks.platform-readiness-validation.results.checks-warnings)
+      taskSpec:
+        params:
+          - name: validation-status
+          - name: checks-passed
+          - name: checks-failed
+          - name: checks-warnings
+        steps:
+          - name: print-summary
+            image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+            script: |
+              #!/bin/bash
+              echo "=" * 80
+              echo "PLATFORM READINESS VALIDATION PIPELINE - SUMMARY"
+              echo "=" * 80
+              echo ""
+              echo "Overall Status: $(params.validation-status)"
+              echo "Checks Passed: $(params.checks-passed)"
+              echo "Checks Failed: $(params.checks-failed)"
+              echo "Checks Warnings: $(params.checks-warnings)"
+              echo ""
+
+              if [ "$(params.validation-status)" = "PASSED" ]; then
+                echo "✅ Platform is ready for notebook execution!"
+              elif [ "$(params.validation-status)" = "DEGRADED" ]; then
+                echo "⚠️  Platform has warnings - review recommended"
+              else
+                echo "❌ Platform validation failed - remediation required"
+              fi
+
+              echo "=" * 80

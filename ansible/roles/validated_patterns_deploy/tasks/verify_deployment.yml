@@ -1,0 +1,28 @@
+---
+# Verify pattern deployment
+
+- name: Wait for ArgoCD Application to sync
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ validated_patterns_pattern_name }}"
+    namespace: openshift-gitops
+  register: app_status
+  until: app_status.resources[0].status.operationState.phase == 'Succeeded' or app_status.resources[0].status.operationState.phase == 'Error'
+  retries: 30
+  delay: 10
+
+- name: Check application health
+  assert:
+    that:
+      - app_status.resources[0].status.health.status == 'Healthy'
+    fail_msg: "Application health status is not Healthy"
+    success_msg: "✅ Application is Healthy"
+
+- name: Display deployment verification
+  debug:
+    msg: |
+      ✅ Deployment verified:
+      - Application: {{ validated_patterns_pattern_name }}
+      - Status: {{ app_status.resources[0].status.operationState.phase }}
+      - Health: {{ app_status.resources[0].status.health.status }}

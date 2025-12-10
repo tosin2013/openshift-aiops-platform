@@ -1,0 +1,95 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: reconcile-inferenceservices
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: reconcile-inferenceservices
+    app.kubernetes.io/part-of: s3-configuration
+spec:
+  description: |
+    Reconciles KServe InferenceServices after models are uploaded to S3.
+    Triggers model download and deployment.
+
+    Actions:
+    - Patch InferenceServices to trigger reconciliation
+    - Wait for model download
+    - Verify predictor pods are ready
+
+  params:
+    - name: namespace
+      type: string
+      default: self-healing-platform
+      description: Target namespace for InferenceServices
+    - name: timeout
+      type: string
+      default: "300"
+      description: Timeout in seconds for reconciliation
+
+  steps:
+    - name: reconcile-services
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        NAMESPACE="$(params.namespace)"
+        TIMEOUT="$(params.timeout)"
+
+        echo "=== Reconciling InferenceServices ==="
+        echo "Namespace: $NAMESPACE"
+        echo "Timeout: ${TIMEOUT}s"
+
+        # Get all InferenceServices
+        SERVICES=$(oc get inferenceservices -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+
+        if [[ -z "$SERVICES" ]]; then
+          echo "⚠️  WARNING: No InferenceServices found in namespace $NAMESPACE"
+          exit 0
+        fi
+
+        echo "Found InferenceServices: $SERVICES"
+
+        # Trigger reconciliation by patching each service
+        for service in $SERVICES; do
+          echo "Reconciling InferenceService: $service"
+
+          # Add annotation to trigger reconciliation
+          oc patch inferenceservice "$service" -n "$NAMESPACE" \
+            --type merge \
+            -p '{"metadata":{"annotations":{"reconcile.kserve.io/force":"true"}}}' \
+            2>/dev/null || echo "⚠️  Could not patch $service"
+        done
+
+        echo "✅ PASS: InferenceServices patched for reconciliation"
+
+        # Wait for predictor pods to be ready
+        echo "Waiting for predictor pods to be ready..."
+
+        START_TIME=$(date +%s)
+        while true; do
+          CURRENT_TIME=$(date +%s)
+          ELAPSED=$((CURRENT_TIME - START_TIME))
+
+          if [[ $ELAPSED -gt $TIMEOUT ]]; then
+            echo "⚠️  WARNING: Timeout waiting for predictor pods"
+            break
+          fi
+
+          # Check if any predictor pods are running
+          READY_PODS=$(oc get pods -n "$NAMESPACE" -l component=predictor \
+            -o jsonpath='{.items[?(@.status.conditions[?(@.type=="Ready")].status=="True")].metadata.name}' 2>/dev/null | wc -w)
+
+          TOTAL_PODS=$(oc get pods -n "$NAMESPACE" -l component=predictor \
+            -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | wc -w)
+
+          if [[ $TOTAL_PODS -gt 0 ]] && [[ $READY_PODS -eq $TOTAL_PODS ]]; then
+            echo "✅ PASS: All predictor pods are ready ($READY_PODS/$TOTAL_PODS)"
+            break
+          fi
+
+          echo "Waiting... ($READY_PODS/$TOTAL_PODS ready) [${ELAPSED}s/${TIMEOUT}s]"
+          sleep 10
+        done
+
+        echo "=== InferenceService Reconciliation Complete ==="

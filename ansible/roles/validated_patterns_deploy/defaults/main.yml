@@ -1,0 +1,15 @@
+---
+# Defaults for validated_patterns_deploy role
+
+# Pattern configuration
+validated_patterns_pattern_name: "common"
+validated_patterns_pattern_path: "patterns/common"
+validated_patterns_namespace: "validated-patterns"
+
+# Repository configuration
+validated_patterns_repo_url: "https://github.com/validatedpatterns/patterns.git"
+validated_patterns_target_revision: "main"
+
+# Deployment options
+validated_patterns_sync_timeout: 300  # seconds
+validated_patterns_auto_sync: true

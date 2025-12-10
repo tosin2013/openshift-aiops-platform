@@ -1,0 +1,69 @@
+---
+# Main tasks for validated_patterns_cleanup role
+# Purpose: Clean up Pattern CRs, ArgoCD applications, and namespaces
+
+- name: Display role purpose
+  debug:
+    msg: "Cleaning up Validated Patterns deployment"
+
+- name: Display cleanup information
+  debug:
+    msg: |
+      ========================================
+      Validated Patterns Cleanup
+      ========================================
+      Pattern: {{ cleanup_pattern_name }}
+      Operator Namespace: {{ cleanup_operator_namespace }}
+      GitOps Namespace: {{ cleanup_gitops_namespace }}
+      App Namespaces: {{ cleanup_app_namespaces | join(', ') }}
+      ========================================
+
+- name: Include ArgoCD applications cleanup
+  include_tasks: cleanup_argocd_applications.yml
+
+- name: Include Pattern CR cleanup
+  include_tasks: cleanup_pattern_cr.yml
+
+- name: Include application namespaces cleanup
+  include_tasks: cleanup_namespaces.yml
+
+- name: Include optional GitOps cleanup
+  include_tasks: cleanup_gitops.yml
+  when: cleanup_gitops | default(false) | bool
+
+- name: Include optional Gitea cleanup
+  include_tasks: cleanup_gitea.yml
+  when: cleanup_gitea | default(false) | bool
+
+- name: Include optional operator cleanup
+  include_tasks: cleanup_operator.yml
+  when: cleanup_operator | default(false) | bool
+
+- name: Display cleanup summary
+  debug:
+    msg: |
+      ========================================
+      Cleanup Summary
+      ========================================
+      ✅ ArgoCD applications deleted
+      ✅ Pattern CR deleted
+      ✅ Application namespaces deleted
+      {% if cleanup_gitops | default(false) %}
+      ✅ GitOps namespace deleted
+      {% else %}
+      ℹ️  GitOps namespace retained (recommended for iterative testing)
+      {% endif %}
+      {% if cleanup_gitea | default(false) %}
+      ✅ Gitea namespace deleted
+      {% else %}
+      ℹ️  Gitea namespace retained (recommended for development)
+      {% endif %}
+      {% if cleanup_operator | default(false) %}
+      ✅ VP Operator uninstalled
+      {% else %}
+      ℹ️  VP Operator retained (recommended for iterative testing)
+      {% endif %}
+      ========================================
+
+      Cluster is now ready for fresh pattern deployment!
+      ========================================

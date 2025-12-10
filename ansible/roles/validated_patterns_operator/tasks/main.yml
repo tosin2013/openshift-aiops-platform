@@ -1,0 +1,70 @@
+---
+# Main tasks for validated_patterns_operator role
+# This role wraps the Validated Patterns Operator for end-user deployment
+
+- name: Display role information
+  debug:
+    msg: |
+      ========================================
+      Validated Patterns Operator Deployment
+      ========================================
+      Pattern: {{ validated_patterns_pattern_name }}
+      Git URL: {{ validated_patterns_git_url }}
+      Revision: {{ validated_patterns_git_revision }}
+      Target Namespace: {{ validated_patterns_target_namespace }}
+      ========================================
+
+# ============================================================
+# PRE-DEPLOYMENT VALIDATION
+# ============================================================
+
+- name: Run pre-deployment validation
+  include_tasks: pre_deployment_validation.yml
+  when: vp_validate_prerequisites | default(true) | bool
+  tags:
+    - validate
+    - prerequisites
+
+# ============================================================
+# OPERATOR INSTALLATION
+# ============================================================
+
+- name: Include operator installation tasks
+  include_tasks: install_operator.yml
+  tags:
+    - install
+    - operator
+
+- name: Include pattern CR creation tasks
+  include_tasks: create_pattern_cr.yml
+  tags:
+    - deploy
+    - pattern
+
+- name: Include GitOps wait tasks
+  include_tasks: wait_for_gitops.yml
+  tags:
+    - wait
+    - gitops
+
+- name: Include validation tasks
+  include_tasks: validate_deployment.yml
+  when: vp_validate_deployment | bool
+  tags:
+    - validate
+
+- name: Display deployment summary
+  debug:
+    msg: |
+      ========================================
+      Deployment Complete!
+      ========================================
+      Pattern: {{ validated_patterns_pattern_name }}
+      Status: Deployed
+      GitOps Namespace: {{ validated_patterns_target_namespace }}
+
+      Next Steps:
+      1. Access ArgoCD UI to monitor applications
+      2. Check application sync status
+      3. Verify all components are healthy
+      ========================================

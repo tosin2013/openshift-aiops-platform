@@ -1,0 +1,44 @@
+apiVersion: v2
+name: self-healing-platform
+description: Self-Healing Platform Helm Chart for OpenShift AIOps
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+# Chart metadata
+home: https://github.com/openshift-aiops/self-healing-platform
+sources:
+  - https://github.com/openshift-aiops/self-healing-platform
+maintainers:
+  - name: Platform Team
+    email: platform-team@example.com
+
+# Keywords for searching
+keywords:
+  - openshift
+  - aiops
+  - self-healing
+  - kubernetes
+  - gitops
+  - helm
+
+# Chart dependencies (if any)
+dependencies: []
+
+# Chart annotations
+annotations:
+  # Validated Patterns framework
+  validatedpatterns.io/framework: "openshift"
+  validatedpatterns.io/version: "1.0"
+
+  # OpenShift specific
+  openshift.io/display-name: "Self-Healing Platform"
+  openshift.io/documentation: "https://github.com/openshift-aiops/self-healing-platform/docs"
+
+  # Operator Hub metadata
+  operatorhub.io/ui-metadata-max-k8s-version: "1.31"
+  operatorhub.io/ui-metadata-min-k8s-version: "1.27"
+
+  # Helm Hub metadata
+  category: "AIOps"
+  licenses: "Apache-2.0"

@@ -1,0 +1,50 @@
+---
+# Uninstall Validated Patterns Operator (Optional)
+
+- name: Display operator cleanup warning
+  debug:
+    msg: |
+      ⚠️  Uninstalling Validated Patterns Operator
+      This will remove the operator completely.
+
+- name: Get VP Operator Subscription
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: patterns-operator
+    namespace: "{{ cleanup_operator_namespace }}"
+  register: operator_subscription
+  ignore_errors: yes
+
+- name: Delete VP Operator Subscription
+  kubernetes.core.k8s:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: patterns-operator
+    namespace: "{{ cleanup_operator_namespace }}"
+    state: absent
+  when: operator_subscription.resources | length > 0
+  ignore_errors: yes
+
+- name: Get VP Operator CSV
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ cleanup_operator_namespace }}"
+  register: operator_csv
+  ignore_errors: yes
+
+- name: Delete VP Operator CSV
+  kubernetes.core.k8s:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ item.metadata.name }}"
+    namespace: "{{ cleanup_operator_namespace }}"
+    state: absent
+  loop: "{{ operator_csv.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list }}"
+  when: operator_csv.resources is defined
+  ignore_errors: yes
+
+- name: Display operator cleanup status
+  debug:
+    msg: "✅ VP Operator uninstalled"

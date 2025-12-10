@@ -1,0 +1,34 @@
+---
+galaxy_info:
+  role_name: validated_patterns_notebooks
+  author: OpenShift AIOps Platform Team
+  description: Deploy and manage Jupyter Notebook Validator Operator for CRD-based notebook validation
+  company: Red Hat
+
+  license: GPL-3.0-only
+
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+
+  galaxy_tags:
+    - openshift
+    - kubernetes
+    - jupyter
+    - notebooks
+    - validation
+    - operator
+    - crd
+    - mlops
+
+dependencies:
+  - role: validated_patterns_prerequisites
+    when: notebooks_operator_enabled | default(true) | bool
+
+collections:
+  - kubernetes.core
+  - community.kubernetes

@@ -1,0 +1,39 @@
+---
+# defaults file for validated_patterns_cleanup role
+
+# Pattern name to clean up
+cleanup_pattern_name: "validated-patterns-ansible-toolkit"
+
+# Namespace where the Pattern CR and operator are installed
+cleanup_operator_namespace: "openshift-operators"
+
+# GitOps namespace where ArgoCD is installed
+cleanup_gitops_namespace: "openshift-gitops"
+
+# Application namespaces to delete
+cleanup_app_namespaces:
+  - validated-patterns
+  - quarkus-app-dev
+  - quarkus-app-prod
+
+# Wait timeout for resource deletion (seconds)
+cleanup_wait_timeout: 300
+
+# Optional: Delete GitOps namespace (removes ArgoCD completely)
+# NOTE: Usually set to FALSE for iterative testing/development
+# ArgoCD is typically deployed by common/ subtree and shared across patterns
+cleanup_gitops: false
+
+# Optional: Delete Gitea namespace (removes local git repository)
+# NOTE: Usually set to FALSE for development environments
+# Gitea is used for local pattern development and should be retained
+cleanup_gitea: false
+cleanup_gitea_namespace: "gitea"
+
+# Optional: Uninstall Validated Patterns Operator
+# NOTE: Usually set to FALSE for iterative testing
+# Operator can be reused across multiple pattern deployments
+cleanup_operator: false
+
+# Debug mode
+cleanup_debug: true

@@ -1,0 +1,140 @@
+# OpenShift Data Foundation NooBaa Object Store
+# Provides S3-compatible object storage for model artifacts
+# Follows Validated Patterns framework for AI/ML deployments
+
+---
+# NooBaa Object Store Configuration
+apiVersion: noobaa.io/v1alpha1
+kind: NooBaa
+metadata:
+  name: noobaa
+  namespace: openshift-storage
+  labels:
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  # Database resources for NooBaa metadata
+  dbResources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1
+      memory: 2Gi
+
+  # Core NooBaa resources
+  coreResources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+  # Use ODF storage for NooBaa backend
+  pvPoolDefaultStorageClass: ocs-storagecluster-ceph-rbd
+
+  # Enable S3 service
+  s3:
+    sslSecretName: ""  # Use self-signed certs for dev
+
+  # Bucket class for model storage
+  bucketClass:
+    placementPolicy: "Spread"
+
+---
+# S3 Bucket for Model Artifacts
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: model-storage
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: model-storage
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  # Auto-generate bucket name
+  generateBucketName: model-storage
+
+  # Use NooBaa storage class
+  storageClassName: openshift-storage.noobaa.io
+
+  # Bucket class for placement policy
+  bucketClass: default
+
+---
+# S3 Bucket for Training Data
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: training-data
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: training-data
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  generateBucketName: training-data
+  storageClassName: openshift-storage.noobaa.io
+  bucketClass: default
+
+---
+# S3 Bucket for Inference Results
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: inference-results
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: inference-results
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  generateBucketName: inference-results
+  storageClassName: openshift-storage.noobaa.io
+  bucketClass: default
+
+---
+# ServiceAccount for KServe to access S3
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kserve-s3-access
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: model-serving
+    app.kubernetes.io/part-of: self-healing-platform
+
+---
+# Role for S3 bucket access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: s3-bucket-access
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: model-serving
+spec:
+  rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["model-storage-config"]
+    verbs: ["get"]
+
+---
+# RoleBinding for KServe ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kserve-s3-access
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: model-serving
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: Role
+    name: s3-bucket-access
+  subjects:
+  - kind: ServiceAccount
+    name: self-healing-operator
+    namespace: self-healing-platform

@@ -1,0 +1,42 @@
+---
+# Verify Jupyter Notebook Validator Operator deployment
+
+- name: Check operator namespace exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ jupyter_validator_operator_namespace }}"
+  register: operator_namespace
+  failed_when: operator_namespace.resources | length == 0
+
+- name: Check CRD is registered
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: notebookvalidationjobs.mlops.mlops.dev
+  register: crd_check
+  failed_when: crd_check.resources | length == 0
+
+- name: Check operator pod is running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ jupyter_validator_operator_namespace }}"
+    label_selectors:
+      - control-plane=controller-manager
+  register: operator_pods
+  failed_when: operator_pods.resources | length == 0
+
+- name: Get operator pod status
+  set_fact:
+    operator_pod_status: "{{ operator_pods.resources[0].status.phase }}"
+    operator_pod_name: "{{ operator_pods.resources[0].metadata.name }}"
+
+- name: Display verification results
+  debug:
+    msg: |
+      ✅ Jupyter Notebook Validator Operator verified:
+        - Namespace: {{ jupyter_validator_operator_namespace }}
+        - CRD: notebookvalidationjobs.mlops.mlops.dev
+        - Pod: {{ operator_pod_name }} ({{ operator_pod_status }})
+        - Webhooks: {{ 'enabled' if jupyter_validator_enable_webhooks else 'disabled' }}

@@ -1,0 +1,166 @@
+{{- /*
+Pre-Deployment Validation ConfigMap
+This ConfigMap contains validation checks to ensure the environment is compatible
+with the OpenShift AIOps Platform deployment.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pre-deployment-validation
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: pre-deployment-validation
+    app.kubernetes.io/component: deployment-validation
+data:
+  validation-script.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "=========================================="
+    echo "OpenShift AIOps Platform - Pre-Deployment Validation"
+    echo "=========================================="
+    echo ""
+
+    NAMESPACE="{{ .Values.main.namespace }}"
+    ERRORS=0
+    WARNINGS=0
+
+    # Check 1: OpenShift Version
+    echo "1. Checking OpenShift Version..."
+    OCP_VERSION=$(oc version 2>/dev/null | grep "Server Version" | awk '{print $3}')
+    echo "   OpenShift Version: $OCP_VERSION"
+    if [[ "$OCP_VERSION" < "4.14" ]]; then
+      echo "   ❌ FAIL: OpenShift 4.14+ required"
+      ((ERRORS++))
+    else
+      echo "   ✅ PASS"
+    fi
+    echo ""
+
+    # Check 2: Node Configuration
+    echo "2. Checking Node Configuration..."
+    TOTAL_NODES=$(oc get nodes --no-headers 2>/dev/null | wc -l)
+    WORKER_NODES=$(oc get nodes -l node-role.kubernetes.io/worker --no-headers 2>/dev/null | wc -l)
+    GPU_NODES=$(oc get nodes -l node-role.kubernetes.io/worker-gpu --no-headers 2>/dev/null | wc -l)
+
+    echo "   Total Nodes: $TOTAL_NODES"
+    echo "   Worker Nodes: $WORKER_NODES"
+    echo "   GPU Worker Nodes: $GPU_NODES"
+
+    if [[ $TOTAL_NODES -lt 5 ]]; then
+      echo "   ⚠️  WARNING: Minimum 5 nodes recommended (3 control + 2 workers)"
+      ((WARNINGS++))
+    fi
+    if [[ $GPU_NODES -lt 1 ]]; then
+      echo "   ⚠️  WARNING: No GPU nodes found. Workshop requires GPU node for model serving."
+      ((WARNINGS++))
+    else
+      echo "   ✅ PASS"
+    fi
+    echo ""
+
+    # Check 3: Storage Configuration
+    echo "3. Checking Storage Configuration..."
+    CEPHFS_SC=$(oc get storageclasses -o name 2>/dev/null | grep -i cephfs | wc -l)
+
+    if [[ $CEPHFS_SC -lt 1 ]]; then
+      echo "   ❌ FAIL: CephFS storage class required"
+      ((ERRORS++))
+    else
+      echo "   ✅ PASS: CephFS storage class found"
+    fi
+    echo ""
+
+    # Check 4: CSI Drivers
+    echo "4. Checking CSI Drivers..."
+    CEPHFS_CSI=$(oc get csidriver -o name 2>/dev/null | grep -i cephfs | wc -l)
+
+    if [[ $CEPHFS_CSI -lt 1 ]]; then
+      echo "   ❌ FAIL: CephFS CSI driver required"
+      ((ERRORS++))
+    else
+      echo "   ✅ PASS: CephFS CSI driver found"
+    fi
+    echo ""
+
+    # Check 5: CSI Plugin on GPU Node
+    echo "5. Checking CSI Plugin on GPU Node..."
+    if [[ $GPU_NODES -gt 0 ]]; then
+      GPU_NODE=$(oc get nodes -l node-role.kubernetes.io/worker-gpu -o name 2>/dev/null | head -1 | cut -d'/' -f2)
+      CSI_PODS=$(oc get pods -n openshift-storage -o wide 2>/dev/null | grep "$GPU_NODE" | grep csi-cephfsplugin | wc -l)
+
+      if [[ $CSI_PODS -lt 1 ]]; then
+        echo "   ⚠️  WARNING: CSI plugin not running on GPU node: $GPU_NODE"
+        echo "   ACTION: Update CSI DaemonSet to add storage node toleration"
+        ((WARNINGS++))
+      else
+        echo "   ✅ PASS: CSI plugin running on GPU node"
+      fi
+    fi
+    echo ""
+
+    # Check 6: ODF Status
+    echo "6. Checking ODF/Ceph Status..."
+    ODF_RUNNING=$(oc get pods -n openshift-storage --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+
+    if [[ $ODF_RUNNING -lt 10 ]]; then
+      echo "   ⚠️  WARNING: ODF may not be fully operational ($ODF_RUNNING pods running)"
+      ((WARNINGS++))
+    else
+      echo "   ✅ PASS: ODF operational"
+    fi
+    echo ""
+
+    # Summary
+    echo "=========================================="
+    echo "Validation Summary"
+    echo "=========================================="
+    echo "Errors: $ERRORS"
+    echo "Warnings: $WARNINGS"
+    echo ""
+
+    if [[ $ERRORS -gt 0 ]]; then
+      echo "❌ DEPLOYMENT BLOCKED: Fix errors before proceeding"
+      exit 1
+    elif [[ $WARNINGS -gt 0 ]]; then
+      echo "⚠️  DEPLOYMENT ALLOWED: Address warnings for optimal performance"
+      exit 0
+    else
+      echo "✅ DEPLOYMENT READY: All checks passed"
+      exit 0
+    fi
+
+  environment-baseline.txt: |
+    # OpenShift AIOps Platform - Environment Baseline
+    # Generated: {{ now | date "2006-01-02T15:04:05Z07:00" }}
+
+    ## Minimum Requirements
+    - OpenShift Version: 4.14+
+    - Kubernetes Version: 1.27+
+    - Total Nodes: 5+ (3 control-plane, 2+ workers)
+    - GPU Nodes: 1+ (for model serving)
+    - Storage: CephFS (via ODF)
+    - CSI Drivers: CephFS CSI driver
+
+    ## Recommended Configuration
+    - Control Plane Nodes: 3 (m6a.2xlarge or larger)
+    - Worker Nodes: 2+ (m6a.4xlarge or larger)
+    - GPU Worker Nodes: 1+ (g6.xlarge or larger with NVIDIA GPU)
+    - Storage Nodes: 3 (with ODF/Ceph)
+    - Total Memory: 128Gi+ across cluster
+    - Total CPU: 32+ cores across cluster
+
+    ## Node Taints
+    - Control Plane: node-role.kubernetes.io/master:NoSchedule
+    - GPU Worker: nvidia.com/gpu=True:NoSchedule
+    - Storage Nodes: node.ocs.openshift.io/storage=true:NoSchedule
+
+    ## Storage Classes Required
+    - ocs-storagecluster-cephfs (CephFS, RWX)
+    - gp3-csi (AWS EBS, RWO)
+
+    ## Operators Required
+    - OpenShift Storage (ODF/Ceph)
+    - OpenShift AI (RHODS)
+    - External Secrets Operator
+    - KServe (for model serving)

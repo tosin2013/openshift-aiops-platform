@@ -1,0 +1,73 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: anomaly-detector
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/component: model-serving
+  annotations:
+    serving.kserve.io/deploymentMode: "RawDeployment"  # Changed from Serverless for stability
+    argocd.argoproj.io/sync-wave: "2"
+    # Skip health check - models may not exist on first deploy
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: sklearn
+      runtime: sklearn-pvc-runtime  # Use PVC-compatible runtime
+      storageUri: "pvc://model-storage-pvc/anomaly-detector"  # Direct PVC access with subdirectory
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+          # No GPU - sklearn runtime is CPU-only
+---
+# Predictive Analytics InferenceService (PVC-based)
+# Uses sklearn-pvc-runtime for simplified model serving without S3 credentials
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: predictive-analytics
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/component: model-serving
+  annotations:
+    serving.kserve.io/deploymentMode: "RawDeployment"  # Changed from Serverless for stability
+    argocd.argoproj.io/sync-wave: "2"
+    # Skip health check - models may not exist on first deploy
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: sklearn
+      runtime: sklearn-pvc-runtime  # Use PVC-compatible runtime
+      storageUri: "pvc://model-storage-pvc/predictive-analytics"  # Direct PVC access with subdirectory
+      resources:
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+          # No GPU - sklearn runtime is CPU-only
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-serving-metrics
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/component: model-serving
+spec:
+  selector:
+    serving.kserve.io/inferenceservice: anomaly-detector
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP

@@ -1,0 +1,70 @@
+---
+apiVersion: operator.external-secrets.io/v1alpha1
+kind: OperatorConfig
+metadata:
+  name: cluster
+  namespace: external-secrets-operator
+spec:
+  # Enable Prometheus monitoring
+  prometheus:
+    enabled: true
+    service:
+      port: 8080
+
+  # Resource limits for the main controller
+  resources:
+    requests:
+      cpu: 10m
+      memory: 96Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+
+  # Enable cluster-wide resources
+  crds:
+    createClusterExternalSecret: true
+    createClusterSecretStore: true
+
+  # Process cluster-wide stores and secrets
+  processClusterStore: true
+  processClusterExternalSecret: true
+
+  # Leader election for HA
+  leaderElect: true
+
+  # Number of concurrent reconciliations
+  concurrent: 1
+
+  # Webhook configuration
+  webhook:
+    create: true
+    replicaCount: 1
+    certCheckInterval: "5m"
+    certDir: "/tmp/certs"
+    prometheus:
+      enabled: true
+      service:
+        port: 8080
+    resources:
+      requests:
+        cpu: 10m
+        memory: 96Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
+
+  # Certificate controller configuration
+  certController:
+    create: true
+    requeueInterval: "5m"
+    prometheus:
+      enabled: true
+      service:
+        port: 8080
+    resources:
+      requests:
+        cpu: 10m
+        memory: 96Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi

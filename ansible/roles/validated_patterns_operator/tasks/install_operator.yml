@@ -1,0 +1,328 @@
+---
+# Install Validated Patterns Operator
+
+- name: Check if operator namespace exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ vp_operator_namespace }}"
+  register: operator_namespace_check
+  ignore_errors: yes
+
+- name: Create operator namespace if it doesn't exist
+  kubernetes.core.k8s:
+    name: "{{ vp_operator_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+  when: operator_namespace_check.resources | length == 0
+
+- name: Check if operators are already installed
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ vp_operator_namespace }}"
+  register: existing_operators
+  ignore_errors: yes
+
+- name: Filter for GitOps operator CSV
+  set_fact:
+    gitops_operator_found: "{{ existing_operators.resources | selectattr('metadata.name', 'search', 'gitops-operator') | list | length > 0 }}"
+  when: existing_operators.resources is defined
+
+- name: Filter for Validated Patterns operator CSV
+  set_fact:
+    patterns_operator_found: "{{ existing_operators.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list | length > 0 }}"
+  when: existing_operators.resources is defined
+
+- name: Display existing operator status
+  debug:
+    msg: |
+      OpenShift GitOps Operator installed: {{ gitops_operator_found | default(false) }}
+      Validated Patterns Operator installed: {{ patterns_operator_found | default(false) }}
+  when: vp_debug_mode | bool
+
+- name: Create OperatorGroup for operators (if needed)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: "global-operators"
+        namespace: "{{ vp_operator_namespace }}"
+      spec:
+        targetNamespaces: []
+  when: not (gitops_operator_found | default(false)) or not (patterns_operator_found | default(false))
+
+- name: Create Subscription for OpenShift GitOps Operator
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: "openshift-gitops-operator"
+        namespace: "{{ vp_operator_namespace }}"
+      spec:
+        channel: "latest"
+        name: "openshift-gitops-operator"
+        source: "redhat-operators"
+        sourceNamespace: "openshift-marketplace"
+        installPlanApproval: "Automatic"
+  register: gitops_subscription
+  when: not (gitops_operator_found | default(false))
+
+- name: Set subscription spec without startingCSV
+  set_fact:
+    subscription_spec:
+      channel: "{{ vp_operator_channel }}"
+      name: "{{ vp_operator_name }}"
+      source: "{{ vp_operator_source }}"
+      sourceNamespace: "{{ vp_operator_source_namespace }}"
+      installPlanApproval: "{{ vp_operator_install_plan_approval }}"
+  when: not (patterns_operator_found | default(false)) and (vp_operator_starting_csv | default('', true) == '')
+
+- name: Set subscription spec with startingCSV
+  set_fact:
+    subscription_spec:
+      channel: "{{ vp_operator_channel }}"
+      name: "{{ vp_operator_name }}"
+      source: "{{ vp_operator_source }}"
+      sourceNamespace: "{{ vp_operator_source_namespace }}"
+      installPlanApproval: "{{ vp_operator_install_plan_approval }}"
+      startingCSV: "{{ vp_operator_starting_csv }}"
+  when: not (patterns_operator_found | default(false)) and (vp_operator_starting_csv | default('', true) != '')
+
+- name: Create Subscription for Validated Patterns Operator
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: "{{ vp_operator_name }}"
+        namespace: "{{ vp_operator_namespace }}"
+      spec: "{{ subscription_spec }}"
+  register: patterns_subscription
+  when: not (patterns_operator_found | default(false))
+
+- name: Wait for OpenShift GitOps Operator CSV to be created
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ vp_operator_namespace }}"
+  register: gitops_csv
+  until:
+    - gitops_csv.resources | length > 0
+    - gitops_csv.resources | selectattr('metadata.name', 'search', 'gitops-operator') | list | length > 0
+  retries: "{{ vp_operator_install_retries }}"
+  delay: "{{ vp_operator_install_delay }}"
+  when: not (gitops_operator_found | default(false))
+
+- name: Wait for Validated Patterns Operator CSV to be created
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ vp_operator_namespace }}"
+  register: patterns_csv
+  until:
+    - patterns_csv.resources | length > 0
+    - patterns_csv.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list | length > 0
+  retries: "{{ vp_operator_install_retries }}"
+  delay: "{{ vp_operator_install_delay }}"
+  when: not (patterns_operator_found | default(false))
+
+- name: Get existing operators CSV (if already installed)
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ vp_operator_namespace }}"
+  register: existing_csv
+  when: gitops_operator_found | default(false) or patterns_operator_found | default(false)
+
+- name: Get GitOps Operator CSV name (newly installed)
+  set_fact:
+    gitops_csv_name: "{{ (gitops_csv.resources | selectattr('metadata.name', 'search', 'gitops-operator') | list | first).metadata.name }}"
+  when:
+    - not (gitops_operator_found | default(false))
+    - gitops_csv is defined
+    - gitops_csv.resources | length > 0
+
+- name: Get GitOps Operator CSV name (already installed)
+  set_fact:
+    gitops_csv_name: "{{ (existing_csv.resources | selectattr('metadata.name', 'search', 'gitops-operator') | list | first).metadata.name }}"
+  when:
+    - gitops_operator_found | default(false)
+    - existing_csv is defined
+    - existing_csv.resources | length > 0
+
+- name: Get Patterns Operator CSV name (newly installed)
+  set_fact:
+    patterns_csv_name: "{{ (patterns_csv.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list | first).metadata.name }}"
+  when:
+    - not (patterns_operator_found | default(false))
+    - patterns_csv is defined
+    - patterns_csv.resources | length > 0
+
+- name: Get Patterns Operator CSV name (already installed)
+  set_fact:
+    patterns_csv_name: "{{ (existing_csv.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list | first).metadata.name }}"
+  when:
+    - patterns_operator_found | default(false)
+    - existing_csv is defined
+    - existing_csv.resources | length > 0
+
+- name: Wait for GitOps Operator to be ready
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ gitops_csv_name }}"
+    namespace: "{{ vp_operator_namespace }}"
+  register: gitops_status
+  until:
+    - gitops_status.resources | length > 0
+    - gitops_status.resources[0].status.phase is defined
+    - gitops_status.resources[0].status.phase == "Succeeded"
+  retries: "{{ vp_operator_install_retries }}"
+  delay: "{{ vp_operator_install_delay }}"
+  when: gitops_csv_name is defined
+
+- name: Wait for Patterns Operator to be ready
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ patterns_csv_name }}"
+    namespace: "{{ vp_operator_namespace }}"
+  register: patterns_status
+  until:
+    - patterns_status.resources | length > 0
+    - patterns_status.resources[0].status.phase is defined
+    - patterns_status.resources[0].status.phase == "Succeeded"
+  retries: "{{ vp_operator_install_retries }}"
+  delay: "{{ vp_operator_install_delay }}"
+  when: patterns_csv_name is defined
+
+- name: Display GitOps operator installation status
+  debug:
+    msg: |
+      ✅ OpenShift GitOps Operator ready
+      CSV: {{ gitops_csv_name | default('N/A') }}
+      Namespace: {{ vp_operator_namespace }}
+      Status: {{ gitops_status.resources[0].status.phase | default('Unknown') }}
+  when:
+    - gitops_status is defined
+    - gitops_status.resources | length > 0
+
+- name: Display Patterns operator installation status
+  debug:
+    msg: |
+      ✅ Validated Patterns Operator ready
+      CSV: {{ patterns_csv_name | default('N/A') }}
+      Namespace: {{ vp_operator_namespace }}
+      Status: {{ patterns_status.resources[0].status.phase | default('Unknown') }}
+  when:
+    - patterns_status is defined
+    - patterns_status.resources | length > 0
+
+- name: Verify GitOps operator pod is running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ vp_operator_namespace }}"
+    label_selectors:
+      - "control-plane=gitops-operator"
+  register: gitops_pods
+  until:
+    - gitops_pods.resources | length > 0
+    - gitops_pods.resources[0].status.phase == "Running"
+  retries: "{{ vp_operator_install_retries }}"
+  delay: "{{ vp_operator_install_delay }}"
+  ignore_errors: yes
+
+- name: Verify Patterns operator pod is running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ vp_operator_namespace }}"
+    label_selectors:
+      - "control-plane=controller-manager"
+  register: patterns_pods_all
+  ignore_errors: yes
+
+- name: Filter for patterns-operator pod
+  set_fact:
+    patterns_pods: "{{ {'resources': patterns_pods_all.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list} }}"
+  when: patterns_pods_all.resources is defined
+
+- name: Wait for Patterns operator pod to be running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ vp_operator_namespace }}"
+    label_selectors:
+      - "control-plane=controller-manager"
+  register: patterns_pods_check
+  until:
+    - patterns_pods_check.resources | length > 0
+    - patterns_pods_check.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list | length > 0
+    - (patterns_pods_check.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list | first).status.phase == "Running"
+  retries: "{{ vp_operator_install_retries }}"
+  delay: "{{ vp_operator_install_delay }}"
+  ignore_errors: yes
+
+- name: Set patterns_pods fact from check
+  set_fact:
+    patterns_pods: "{{ {'resources': patterns_pods_check.resources | selectattr('metadata.name', 'search', 'patterns-operator') | list} }}"
+  when: patterns_pods_check.resources is defined
+
+- name: Display GitOps operator pod status
+  debug:
+    msg: |
+      ✅ GitOps Operator pod running
+      Pod: {{ gitops_pods.resources[0].metadata.name }}
+      Status: {{ gitops_pods.resources[0].status.phase }}
+      Ready: {{ gitops_pods.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first }}
+  when:
+    - gitops_pods is defined
+    - gitops_pods.resources | length > 0
+
+- name: Display Patterns operator pod status
+  debug:
+    msg: |
+      ✅ Patterns Operator pod running
+      Pod: {{ patterns_pods.resources[0].metadata.name }}
+      Status: {{ patterns_pods.resources[0].status.phase }}
+      Ready: {{ patterns_pods.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first }}
+  when:
+    - patterns_pods is defined
+    - patterns_pods.resources | length > 0
+
+- name: Verify operator CRDs are available
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: "{{ item }}"
+  loop:
+    - "applications.argoproj.io"
+    - "appprojects.argoproj.io"
+    - "argocds.argoproj.io"
+    - "patterns.gitops.hybrid-cloud-patterns.io"
+  register: crd_check
+  failed_when: crd_check.resources | length == 0
+
+- name: Display CRD verification results
+  debug:
+    msg: |
+      ✅ Operator CRDs verified
+      ArgoCD Application CRD: {{ crd_check.results[0].resources | length > 0 }}
+      ArgoCD AppProject CRD: {{ crd_check.results[1].resources | length > 0 }}
+      ArgoCD CRD: {{ crd_check.results[2].resources | length > 0 }}
+      Validated Patterns CRD: {{ crd_check.results[3].resources | length > 0 }}
+
+- name: Set operator installation complete fact
+  set_fact:
+    vp_operator_installed: true
+    vp_operator_ready: true
+    gitops_operator_installed: "{{ gitops_csv_name is defined }}"
+    patterns_operator_installed: "{{ patterns_csv_name is defined }}"

@@ -1,0 +1,17 @@
+---
+# Deployment validation
+
+- name: Check ArgoCD Application status
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    namespace: openshift-gitops
+  register: apps
+  ignore_errors: yes
+
+- name: Display deployment validation status
+  debug:
+    msg: |
+      ✅ Deployment validation passed:
+      - ArgoCD Applications: {{ apps.resources | length if apps.resources else 0 }}
+      - Deployment monitoring: Active

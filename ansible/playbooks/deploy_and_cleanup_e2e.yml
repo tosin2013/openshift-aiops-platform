@@ -1,0 +1,213 @@
+---
+# Playbook: End-to-End Deployment and Cleanup for Self-Healing Platform
+# Purpose: Complete deployment lifecycle with pre-deployment cleanup and post-deployment validation
+# Framework: Validated Patterns (AGENTS.md guidelines)
+# Usage:
+#   - Full deployment: ansible-playbook ansible/playbooks/deploy_and_cleanup_e2e.yml
+#   - Cleanup only: ansible-playbook ansible/playbooks/deploy_and_cleanup_e2e.yml -e "skip_deploy=true"
+#   - Deploy only: ansible-playbook ansible/playbooks/deploy_and_cleanup_e2e.yml -e "skip_cleanup=true"
+
+- name: End-to-End Deployment and Cleanup Workflow
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    # Pattern configuration
+    pattern_name: "self-healing-platform"
+    pattern_namespace: "self-healing-platform"
+
+    # Cleanup configuration (pre-deployment)
+    cleanup_pattern_name: "{{ pattern_name }}"
+    cleanup_operator_namespace: "openshift-operators"
+    cleanup_gitops_namespace: "openshift-gitops"
+    cleanup_app_namespaces:
+      - "{{ pattern_namespace }}"
+      - validated-patterns
+      - quarkus-app-dev
+      - quarkus-app-prod
+
+    # Cleanup options (retain shared infrastructure per AGENTS.md)
+    cleanup_gitops: false      # Keep ArgoCD (from common/ subtree)
+    cleanup_gitea: false       # Keep Gitea (for development)
+    cleanup_operator: false    # Keep operator (reusable)
+
+    # Deployment configuration
+    deploy_timeout: 600        # 10 minutes
+
+    # Workflow control
+    skip_cleanup: false        # Set to true to skip pre-deployment cleanup
+    skip_deploy: false         # Set to true to skip deployment
+    skip_validation: false     # Set to true to skip post-deployment validation
+
+    # Debug mode
+    debug_mode: true
+
+  pre_tasks:
+    - name: Display workflow configuration
+      debug:
+        msg: |
+          ========================================
+          E2E Deployment Workflow Configuration
+          ========================================
+          Pattern: {{ pattern_name }}
+          Namespace: {{ pattern_namespace }}
+
+          Workflow Steps:
+          - Pre-deployment cleanup: {{ not skip_cleanup }}
+          - Deployment: {{ not skip_deploy }}
+          - Post-deployment validation: {{ not skip_validation }}
+
+          Cleanup Options (retain shared infrastructure):
+          - GitOps: {{ cleanup_gitops }}
+          - Gitea: {{ cleanup_gitea }}
+          - Operator: {{ cleanup_operator }}
+          ========================================
+
+    - name: Verify cluster connectivity
+      block:
+        - name: Check oc command availability
+          command: oc version
+          register: oc_version
+          changed_when: false
+
+        - name: Check cluster info
+          command: oc cluster-info
+          register: cluster_info
+          changed_when: false
+
+        - name: Display cluster info
+          debug:
+            msg: "Connected to cluster: {{ cluster_info.stdout_lines[0] }}"
+
+  roles:
+    # Step 1: Pre-deployment cleanup (MANDATORY per AGENTS.md)
+    - name: Pre-deployment cleanup
+      role: validated_patterns_cleanup
+      when: not skip_cleanup
+      tags: ['cleanup', 'pre-deployment']
+
+  tasks:
+    # Step 2: Deployment using Helm (Validated Patterns framework)
+    - name: Deploy Self-Healing Platform
+      block:
+        - name: Create namespace
+          kubernetes.core.k8s:
+            name: "{{ pattern_namespace }}"
+            api_version: v1
+            kind: Namespace
+            state: present
+          when: not skip_deploy
+
+        - name: Create model-storage-config secret (prerequisite)
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: model-storage-config
+                namespace: "{{ pattern_namespace }}"
+                labels:
+                  app.kubernetes.io/managed-by: Helm
+                annotations:
+                  meta.helm.sh/release-name: "{{ pattern_name }}"
+                  meta.helm.sh/release-namespace: "{{ pattern_namespace }}"
+              type: Opaque
+              data:
+                # Keys must match what the Helm chart expects (from model-serving.yaml)
+                AWS_ACCESS_KEY_ID: "{{ 'minioadmin' | b64encode }}"
+                AWS_SECRET_ACCESS_KEY: "{{ 'minioadmin' | b64encode }}"
+                AWS_S3_ENDPOINT: "{{ 'noobaa-mgmt-endpoint' | b64encode }}"
+                AWS_DEFAULT_REGION: "{{ 'us-east-1' | b64encode }}"
+          when: not skip_deploy
+          tags: ['deploy', 'secrets']
+
+        - name: Deploy using Helm (from project root)
+          command: |
+            helm upgrade --install {{ pattern_name }} ./charts/hub \
+              -n {{ pattern_namespace }} \
+              -f ./values-global.yaml \
+              -f ./values-hub.yaml \
+              --wait \
+              --timeout 20m
+          register: helm_deploy
+          changed_when: "'deployed' in helm_deploy.stdout or 'upgraded' in helm_deploy.stdout"
+          when: not skip_deploy
+          tags: ['deploy']
+          args:
+            chdir: "/home/lab-user/openshift-aiops-platform"
+
+        - name: Display deployment result
+          debug:
+            msg: "{{ helm_deploy.stdout }}"
+          when: not skip_deploy and debug_mode
+
+      rescue:
+        - name: Deployment failed - show error
+          debug:
+            msg: "Deployment failed: {{ helm_deploy.stderr }}"
+          when: not skip_deploy
+
+        - name: Fail playbook on deployment error
+          fail:
+            msg: "Helm deployment failed. Check logs above."
+          when: not skip_deploy
+
+    # Step 3: Post-deployment validation (reuse specific task files per AGENTS.md)
+    - name: Post-deployment validation
+      block:
+        - name: Wait for namespace to be ready
+          kubernetes.core.k8s_info:
+            kind: Namespace
+            name: "{{ pattern_namespace }}"
+          register: ns_info
+          until: ns_info.resources | length > 0
+          retries: 10
+          delay: 5
+          when: not skip_validation
+
+        - name: Check deployment status
+          command: oc get deployment -n {{ pattern_namespace }}
+          register: deployment_status
+          changed_when: false
+          when: not skip_validation
+
+        - name: Display deployment status
+          debug:
+            msg: "{{ deployment_status.stdout }}"
+          when: not skip_validation and debug_mode
+
+        - name: Check pod status
+          command: oc get pods -n {{ pattern_namespace }}
+          register: pod_status
+          changed_when: false
+          when: not skip_validation
+
+        - name: Display pod status
+          debug:
+            msg: "{{ pod_status.stdout }}"
+          when: not skip_validation and debug_mode
+
+      tags: ['validation', 'post-deployment']
+
+  post_tasks:
+    - name: Display workflow completion summary
+      debug:
+        msg: |
+          ========================================
+          E2E Deployment Workflow Complete
+          ========================================
+          Pattern: {{ pattern_name }}
+          Namespace: {{ pattern_namespace }}
+
+          Completed Steps:
+          ✅ Pre-deployment cleanup: {{ not skip_cleanup }}
+          ✅ Deployment: {{ not skip_deploy }}
+          ✅ Post-deployment validation: {{ not skip_validation }}
+
+          Next Steps:
+          1. Verify all resources: oc get all -n {{ pattern_namespace }}
+          2. Check pod logs: oc logs -n {{ pattern_namespace }} -l app=...
+          3. Run e2e tests: ansible-playbook tests/integration/playbooks/test_end_to_end.yml
+          4. Cleanup after testing: ansible-playbook ansible/playbooks/cleanup_environment.yml
+          ========================================

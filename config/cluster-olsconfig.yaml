@@ -1,0 +1,12 @@
+# Generated template - customize for your project
+# YAML Configuration
+
+default:
+  setting: value
+  enabled: false
+
+development:
+  debug: true
+
+production:
+  debug: false

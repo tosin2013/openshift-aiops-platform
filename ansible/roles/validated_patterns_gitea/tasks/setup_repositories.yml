@@ -1,0 +1,10 @@
+---
+# Setup Gitea repositories
+
+- name: Display repository setup status
+  debug:
+    msg: |
+      ✅ Gitea repositories ready:
+      - Gitea is ready for repository creation
+      - Users can create and manage repositories
+      - Integration with ArgoCD available

@@ -1,0 +1,53 @@
+{{- if and (.Values.notebooks) (and (.Values.notebooks.validation) (.Values.notebooks.validation.enabled)) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-model-storage
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/component: model-storage
+    app.kubernetes.io/name: init-model-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  template:
+    spec:
+      containers:
+      - name: init
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "Initializing model storage directory structure..."
+
+          # Create subdirectories for different model types
+          # Each InferenceService requires its own directory
+          mkdir -p /mnt/models/predictive-analytics
+          mkdir -p /mnt/models/arima-predictor
+          mkdir -p /mnt/models/prophet-predictor
+          mkdir -p /mnt/models/lstm-predictor
+          mkdir -p /mnt/models/ensemble-predictor
+          mkdir -p /mnt/models/anomaly-detector  # Keep for backward compatibility
+
+          # Create marker file to indicate initialization complete
+          touch /mnt/models/.initialized
+
+          echo "Model storage initialized successfully"
+          echo "  - /mnt/models/predictive-analytics/ (Isolation Forest models)"
+          echo "  - /mnt/models/arima-predictor/ (ARIMA time-series models)"
+          echo "  - /mnt/models/prophet-predictor/ (Prophet time-series models)"
+          echo "  - /mnt/models/lstm-predictor/ (LSTM autoencoder models)"
+          echo "  - /mnt/models/ensemble-predictor/ (Ensemble configuration)"
+          echo "  - /mnt/models/anomaly-detector/ (legacy, for backward compatibility)"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /mnt/models
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: model-storage-pvc
+      restartPolicy: OnFailure
+  backoffLimit: 3
+{{- end }}

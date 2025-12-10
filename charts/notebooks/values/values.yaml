@@ -1,0 +1,207 @@
+# Default values for self-healing-workbench
+# This is a YAML-formatted file.
+
+# Workbench Configuration
+workbench:
+  name: self-healing-workbench
+  displayName: "Self-Healing Platform Workbench"
+  description: "AI/ML development environment for self-healing platform"
+
+# Image Configuration
+image:
+  # Using the PyTorch 2025.1 image as specified in ADR-011
+  name: "pytorch"
+  tag: "2025.1-cuda-python-3.11-ubi9"
+  # Image will be pulled from redhat-ods-applications namespace
+  pullPolicy: IfNotPresent
+
+# Resource Configuration
+resources:
+  requests:
+    cpu: "1"
+    memory: "4Gi"
+  limits:
+    cpu: "4"
+    memory: "16Gi"
+    nvidia.com/gpu: "1"  # GPU support for ML workloads
+
+# Storage Configuration
+storage:
+  # Data storage for notebooks and datasets
+  data:
+    size: "20Gi"
+    storageClass: "ocs-storagecluster-cephfs"  # RWX storage from ODF
+    accessMode: "ReadWriteMany"
+    mountPath: "/opt/app-root/src/data"
+
+  # Model storage for trained models
+  models:
+    size: "10Gi"
+    storageClass: "ocs-storagecluster-cephfs"
+    accessMode: "ReadWriteMany"
+    mountPath: "/opt/app-root/src/models"
+
+# Environment Variables
+env:
+  # Jupyter Configuration
+  JUPYTER_ENABLE_LAB: "true"
+  JUPYTER_LAB_DISABLE_CHECK_UPDATE: "true"
+
+  # Python Configuration
+  PYTHONPATH: "/opt/app-root/src:/opt/app-root/src/notebooks/utils"
+
+  # Prometheus Configuration (for real data collection)
+  PROMETHEUS_URL: "https://prometheus-k8s.openshift-monitoring.svc.cluster.local:9091"
+  THANOS_URL: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"
+
+  # MCP Server Integration
+  MCP_SERVER_URL: "http://cluster-health-mcp-server.self-healing-platform.svc.cluster.local:3000"
+
+  # Coordination Engine Integration
+  COORDINATION_ENGINE_URL: "http://coordination-engine.self-healing-platform.svc.cluster.local:8080"
+
+# Service Account Configuration
+serviceAccount:
+  create: true
+  name: "self-healing-workbench"
+  annotations:
+    serviceaccounts.openshift.io/oauth-redirectreference.notebook: |
+      {"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"self-healing-workbench"}}
+
+# RBAC Configuration for cluster access
+rbac:
+  create: true
+  rules:
+    # Prometheus access
+    - apiGroups: [""]
+      resources: ["services", "endpoints", "pods"]
+      verbs: ["get", "list", "watch"]
+    # Kubernetes API access for notebooks
+    - apiGroups: [""]
+      resources: ["nodes", "pods", "events", "namespaces"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "replicasets"]
+      verbs: ["get", "list", "watch"]
+    # Metrics access
+    - apiGroups: ["metrics.k8s.io"]
+      resources: ["nodes", "pods"]
+      verbs: ["get", "list"]
+
+# Network Configuration
+networking:
+  # OAuth proxy for authentication
+  oauth:
+    enabled: true
+    image: "registry.redhat.io/openshift4/ose-oauth-proxy:latest"
+    port: 8443
+
+  # Jupyter service
+  service:
+    type: ClusterIP
+    port: 8888
+    targetPort: 8888
+
+# Route Configuration for external access
+route:
+  enabled: true
+  host: ""  # Will be auto-generated
+  tls:
+    termination: "reencrypt"
+    insecureEdgeTerminationPolicy: "Redirect"
+
+# Security Configuration
+security:
+  # Pod Security Context
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Container Security Context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    runAsNonRoot: true
+
+# Tolerations for GPU nodes
+tolerations:
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+# Node Selection
+nodeSelector:
+  node-role.kubernetes.io/worker: ""
+
+# Affinity rules
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      preference:
+        matchExpressions:
+        - key: "accelerator"
+          operator: In
+          values: ["nvidia-tesla-v100", "nvidia-tesla-t4"]
+
+# Monitoring Configuration
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      app: self-healing-workbench
+    interval: 30s
+
+# Git Integration
+git:
+  # Repository to clone on startup
+  repository: "https://gitea-with-admin-gitea.apps.cluster-fn2qb.fn2qb.sandbox1343.opentlc.com/opentlc-mgr/openshift-aiops-platform.git"
+  branch: "main"
+  # Clone to notebooks directory
+  targetPath: "/opt/app-root/src/workspace"
+
+# Additional Python packages to install
+additionalPackages:
+  - "prometheus-api-client"
+  - "kubernetes"
+  - "papermill"
+  - "nbconvert"
+  - "ipywidgets"
+  - "plotly"
+  - "seaborn"
+  - "scikit-learn"
+  - "xgboost"
+  - "lightgbm"
+
+# Startup Scripts
+startupScripts:
+  # Install additional packages
+  - name: "install-packages"
+    script: |
+      #!/bin/bash
+      pip install --user prometheus-api-client kubernetes papermill nbconvert ipywidgets plotly seaborn scikit-learn xgboost lightgbm
+
+  # Clone repository
+  - name: "clone-repo"
+    script: |
+      #!/bin/bash
+      if [ ! -d "/opt/app-root/src/workspace/.git" ]; then
+        git clone https://gitea-with-admin-gitea.apps.cluster-fn2qb.fn2qb.sandbox1343.opentlc.com/opentlc-mgr/openshift-aiops-platform.git /opt/app-root/src/workspace
+      else
+        cd /opt/app-root/src/workspace && git pull
+      fi
+
+  # Set up notebook environment
+  - name: "setup-environment"
+    script: |
+      #!/bin/bash
+      # Create symlinks to notebooks and utilities
+      ln -sf /opt/app-root/src/workspace/notebooks /opt/app-root/src/notebooks
+      ln -sf /opt/app-root/src/workspace/docs /opt/app-root/src/docs
+
+      # Set up Python path
+      echo "export PYTHONPATH=/opt/app-root/src/workspace/notebooks/utils:$PYTHONPATH" >> ~/.bashrc

@@ -1,0 +1,14 @@
+*.log
+*.json
+context
+env.sh
+ansible.cfg
+.vagrant
+collections
+*.log
+/.venv-docs/
+/site/
+/.mkdocs-server.log
+token
+files/optional-configs/*.env
+files/optional-configs/rhsm-activation.env

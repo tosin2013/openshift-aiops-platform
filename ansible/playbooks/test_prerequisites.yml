@@ -1,0 +1,43 @@
+---
+# Playbook: Test Prerequisites for Pattern Deployment
+# Purpose: Validate cluster meets prerequisites before deployment
+# Usage: make check-prerequisites
+# Note: Uses kubernetes.core collection (works inside EE container)
+
+- name: Test Cluster Prerequisites
+  hosts: localhost
+  gather_facts: yes
+
+  tasks:
+    - name: Verify cluster connectivity
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: default
+      register: cluster_info
+      failed_when: false
+
+    - name: Fail if not connected to cluster
+      fail:
+        msg: "Not connected to OpenShift cluster. Please ensure KUBECONFIG is set correctly."
+      when: cluster_info is failed or cluster_info.resources is not defined
+
+    - name: Display cluster info
+      debug:
+        msg: "✓ Connected to cluster successfully"
+
+    - name: Get cluster version
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+      register: nodes_info
+      failed_when: false
+
+    - name: Display node count
+      debug:
+        msg: "✓ Found {{ nodes_info.resources | length }} node(s) in cluster"
+      when: nodes_info.resources is defined
+
+    - name: Prerequisites check complete
+      debug:
+        msg: "✓ All prerequisites satisfied"

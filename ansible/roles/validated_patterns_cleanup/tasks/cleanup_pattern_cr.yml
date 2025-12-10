@@ -1,0 +1,49 @@
+---
+# Delete Pattern Custom Resource
+
+- name: Check if Pattern CR exists
+  kubernetes.core.k8s_info:
+    api_version: gitops.hybrid-cloud-patterns.io/v1alpha1
+    kind: Pattern
+    name: "{{ cleanup_pattern_name }}"
+    namespace: "{{ cleanup_operator_namespace }}"
+  register: pattern_cr_check
+  ignore_errors: yes
+
+- name: Display Pattern CR status
+  debug:
+    msg: "Pattern CR '{{ cleanup_pattern_name }}' found, deleting..."
+  when: pattern_cr_check.resources | length > 0
+
+- name: Delete Pattern Custom Resource
+  kubernetes.core.k8s:
+    api_version: gitops.hybrid-cloud-patterns.io/v1alpha1
+    kind: Pattern
+    name: "{{ cleanup_pattern_name }}"
+    namespace: "{{ cleanup_operator_namespace }}"
+    state: absent
+    wait: yes
+    wait_timeout: "{{ cleanup_wait_timeout }}"
+  when: pattern_cr_check.resources | length > 0
+  ignore_errors: yes
+
+- name: Wait for Pattern CR to be deleted
+  kubernetes.core.k8s_info:
+    api_version: gitops.hybrid-cloud-patterns.io/v1alpha1
+    kind: Pattern
+    name: "{{ cleanup_pattern_name }}"
+    namespace: "{{ cleanup_operator_namespace }}"
+  register: pattern_cr_status
+  until: pattern_cr_status.resources | length == 0
+  retries: 30
+  delay: 10
+  ignore_errors: yes
+
+- name: Display Pattern CR cleanup status
+  debug:
+    msg: |
+      {% if pattern_cr_status.resources | length == 0 %}
+      ✅ Pattern CR deleted
+      {% else %}
+      ⚠️  Pattern CR still exists
+      {% endif %}

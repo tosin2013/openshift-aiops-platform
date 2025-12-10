@@ -1,0 +1,191 @@
+---
+# Playbook: Prerequisites for operator-deploy
+# Purpose: Run Ansible infrastructure setup BEFORE operator-deploy (Helm/VP Operator)
+#
+# This playbook runs the Ansible roles needed to prepare the cluster for
+# the GitOps-based deployment via `make -f common/Makefile operator-deploy`
+#
+# What this playbook does:
+# - Validates cluster prerequisites
+# - Deploys common infrastructure (Helm repos, ESO)
+# - Configures secrets management (source secrets for ESO)
+# - Deploys Jupyter Notebook Validator Operator
+# - Deploys cluster-scoped resources (RBAC, KServe prereqs)
+#
+# What operator-deploy does AFTER this:
+# - Helm templates pattern-install chart
+# - Creates Pattern CR or clustergroup release
+# - VP Operator/ArgoCD syncs the application
+#
+# Usage:
+#   This is called automatically by `make operator-deploy`
+#   Or run directly:
+#   ansible-navigator run ansible/playbooks/operator_deploy_prereqs.yml ...
+
+- name: Prepare Cluster for operator-deploy
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    # Pattern configuration
+    pattern_name: "self-healing-platform"
+    pattern_namespace: "self-healing-platform"
+    pattern_repo_url: "{{ lookup('env', 'PATTERN_REPO_URL') | default('https://gitea-with-admin-gitea.apps.cluster-fn2qb.fn2qb.sandbox1343.opentlc.com/opentlc-mgr/openshift-aiops-platform.git', true) }}"
+    pattern_git_branch: "{{ lookup('env', 'PATTERN_GIT_BRANCH') | default('main', true) }}"
+
+    # Debug mode
+    debug_mode: "{{ lookup('env', 'DEBUG_MODE') | default('false', true) | bool }}"
+
+    # Component enablement
+    enable_secrets_mgmt: true
+    enable_notebooks: true
+
+  pre_tasks:
+    - name: Display operator-deploy prerequisites
+      debug:
+        msg: |
+          ========================================
+          Ansible Prerequisites for operator-deploy
+          ========================================
+          Pattern: {{ pattern_name }}
+          Namespace: {{ pattern_namespace }}
+          Repository: {{ pattern_repo_url }}
+          Branch: {{ pattern_git_branch }}
+
+          This playbook prepares the cluster for GitOps deployment.
+          After completion, operator-deploy will:
+          - Deploy pattern-install Helm chart
+          - Create clustergroup resources
+          - ArgoCD will sync the self-healing-platform application
+          ========================================
+
+    - name: Read Gitea credentials from giteuserpass.md
+      slurp:
+        src: "{{ playbook_dir }}/../../giteuserpass.md"
+      register: giteuserpass_content
+      ignore_errors: yes
+      no_log: true
+
+    - name: Parse Gitea credentials
+      set_fact:
+        gitea_admin_user: "{{ giteuserpass_content.content | b64decode | regex_search('username:\\s*(.+)', '\\1') | first | trim }}"
+        gitea_admin_password: "{{ giteuserpass_content.content | b64decode | regex_search('password:\\s*(.+)', '\\1') | first | trim }}"
+      when: giteuserpass_content is defined and not giteuserpass_content.failed
+      no_log: true
+
+    - name: Fall back to environment variables if giteuserpass.md not found
+      set_fact:
+        gitea_admin_user: "{{ lookup('env', 'GITEA_USER') | default('takinosh', true) }}"
+        gitea_admin_password: "{{ lookup('env', 'GITEA_PASSWORD') | default('', true) }}"
+      when: gitea_admin_user is not defined or gitea_admin_password is not defined
+      no_log: true
+
+    - name: Verify cluster connectivity
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: default
+      register: cluster_check
+      failed_when: cluster_check.resources | length == 0
+
+    - name: Display cluster connection status
+      debug:
+        msg: "✓ Connected to OpenShift cluster"
+
+  roles:
+    # ========================================
+    # Step 1: Prerequisites Validation
+    # ========================================
+    - name: Validate cluster prerequisites
+      role: validated_patterns_prerequisites
+      tags: ['prerequisites']
+      vars:
+        prerequisites_namespace: "{{ pattern_namespace }}"
+        prerequisites_pattern_name: "{{ pattern_name }}"
+
+    # ========================================
+    # Step 2: Common Infrastructure
+    # ========================================
+    - name: Deploy common infrastructure
+      role: validated_patterns_common
+      tags: ['common']
+      vars:
+        common_namespace: "{{ pattern_namespace }}"
+        common_pattern_name: "{{ pattern_name }}"
+        # We're using operator-deploy, so tell the role
+        validated_patterns_use_operator: true
+        deploy_external_secrets_operator: "{{ enable_secrets_mgmt }}"
+        eso_namespace: "external-secrets-operator"
+        eso_channel: "alpha"
+
+    # ========================================
+    # Step 3: Secrets Management
+    # ========================================
+    - name: Configure secrets management
+      role: validated_patterns_secrets
+      when: enable_secrets_mgmt
+      tags: ['secrets']
+      vars:
+        secrets_namespace: "{{ pattern_namespace }}"
+        validated_patterns_secrets_namespace: "{{ pattern_namespace }}"
+        secrets_backend: "kubernetes"
+        gitea_admin_user: "{{ gitea_admin_user | default('') }}"
+        gitea_admin_password: "{{ gitea_admin_password | default('') }}"
+        validated_patterns_create_gitea_credentials: true
+
+    # ========================================
+    # Step 4: Notebook Validator Operator (Kustomize-based)
+    # ========================================
+    - name: Deploy Jupyter Notebook Validator Operator via Kustomize
+      role: validated_patterns_jupyter_validator
+      when: enable_notebooks
+      tags: ['notebooks', 'jupyter-validator']
+      vars:
+        jupyter_validator_operator_enabled: true
+        jupyter_validator_openshift_version: "4.18"
+        jupyter_validator_operator_namespace: "jupyter-notebook-validator-operator"
+        jupyter_validator_validation_namespace: "{{ pattern_namespace }}"
+
+    # ========================================
+    # Step 5: Cluster-Scoped Resources
+    # ========================================
+    - name: Deploy cluster-scoped resources
+      role: validated_patterns_deploy_cluster_resources
+      tags: ['cluster-resources']
+      vars:
+        deploy_cluster_resources: true
+        values_files:
+          - "values-global.yaml"
+          - "values-hub.yaml"
+        cluster_rbac:
+          enabled: true
+          external_secrets:
+            enabled: "{{ enable_secrets_mgmt }}"
+          operator:
+            enabled: true
+          workbench:
+            enabled: true
+          argocd:
+            enabled: true
+        kserve:
+          enabled: true
+
+  post_tasks:
+    - name: Display prerequisites completion
+      debug:
+        msg: |
+          ========================================
+          ✅ Ansible Prerequisites Complete
+          ========================================
+          The cluster is now ready for operator-deploy.
+
+          Completed steps:
+          ✅ Prerequisites validated
+          ✅ Common infrastructure deployed (Helm repos, ESO)
+          ✅ Secrets management configured
+          ✅ Notebook Validator Operator ready
+          ✅ Cluster-scoped resources deployed (RBAC, KServe)
+
+          Next: operator-deploy will run automatically
+          (or run: make -f common/Makefile operator-deploy)
+          ========================================

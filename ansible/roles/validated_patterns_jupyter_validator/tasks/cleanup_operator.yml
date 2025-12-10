@@ -1,0 +1,39 @@
+---
+# Cleanup Jupyter Notebook Validator Operator
+
+- name: Delete all NotebookValidationJob CRs
+  kubernetes.core.k8s:
+    api_version: mlops.mlops.dev/v1alpha1
+    kind: NotebookValidationJob
+    state: absent
+    namespace: "{{ jupyter_validator_validation_namespace }}"
+    wait: yes
+    wait_timeout: 120
+  ignore_errors: yes
+
+- name: Build kustomize overlay path
+  set_fact:
+    kustomize_path: "{{ jupyter_validator_kustomize_base }}/{{ jupyter_validator_kustomize_overlay }}"
+
+- name: Delete operator using kustomize
+  kubernetes.core.k8s:
+    state: absent
+    definition: "{{ lookup('kubernetes.core.kustomize', dir=kustomize_path) }}"
+    wait: yes
+    wait_timeout: 300
+  register: kustomize_delete
+
+- name: Wait for operator namespace removal
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ jupyter_validator_operator_namespace }}"
+  register: namespace_check
+  until: namespace_check.resources | length == 0
+  retries: 10
+  delay: 5
+  ignore_errors: yes
+
+- name: Display cleanup completion
+  debug:
+    msg: "✅ Jupyter Notebook Validator Operator cleaned up successfully"

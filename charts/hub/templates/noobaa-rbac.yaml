@@ -1,0 +1,57 @@
+{{- if and .Values.objectStore.enabled (eq .Values.secrets.backend "external-secrets") .Values.rbac.crossNamespaceEnabled }}
+---
+# ⚠️ CROSS-NAMESPACE RBAC - Managed by Ansible (Hybrid Management Model)
+#
+# Role to read NooBaa admin credentials from openshift-storage namespace
+# Required for noobaa-credentials-init job to copy credentials to self-healing-platform namespace
+#
+# DEPLOYMENT METHOD: Ansible role validated_patterns_deploy_cluster_resources
+# Location: ansible/roles/validated_patterns_deploy_cluster_resources/tasks/deploy_cross_namespace_rbac.yml
+#
+# This section is disabled by default (rbac.crossNamespaceEnabled: false)
+# Only enable if using cluster-admin ArgoCD or manual deployment
+#
+# ADR-030: Hybrid Management Model for Namespaced ArgoCD
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: noobaa-secret-reader
+  namespace: openshift-storage
+  labels:
+    app.kubernetes.io/name: self-healing-platform
+    app.kubernetes.io/component: rbac
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+rules:
+# Read NooBaa admin secret
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["noobaa-admin"]
+  verbs: ["get", "list"]
+# Read S3 route for endpoint URL
+- apiGroups: ["route.openshift.io"]
+  resources: ["routes"]
+  verbs: ["get", "list"]
+
+---
+# RoleBinding to grant self-healing-platform-sa access to NooBaa credentials
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: self-healing-platform-noobaa-reader
+  namespace: openshift-storage
+  labels:
+    app.kubernetes.io/name: self-healing-platform
+    app.kubernetes.io/component: rbac
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: noobaa-secret-reader
+subjects:
+- kind: ServiceAccount
+  name: self-healing-operator
+  namespace: {{ .Values.main.namespace }}
+{{- end }}

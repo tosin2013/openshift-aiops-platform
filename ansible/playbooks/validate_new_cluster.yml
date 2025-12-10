@@ -1,0 +1,357 @@
+---
+# Pre-Deployment Validation Playbook for New Clusters
+# Validates that a new OpenShift cluster is ready to deploy the Self-Healing Platform
+#
+# Usage:
+#   ansible-playbook ansible/playbooks/validate_new_cluster.yml
+#   ansible-playbook ansible/playbooks/validate_new_cluster.yml -e "cluster_validation_report=/tmp/validation-report.txt"
+
+- name: Validate New Cluster for Self-Healing Platform Deployment
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    # Pattern configuration
+    validated_patterns_pattern_name: "self-healing-platform"
+    validated_patterns_min_openshift_version: "4.18"
+    validated_patterns_min_nodes: 5
+    validated_patterns_min_cpu: 24
+    validated_patterns_min_memory: 96
+
+    # Required operators
+    validated_patterns_required_operators:
+      - openshift-gitops-operator
+      - rhods-operator
+      - gpu-operator-certified
+      - serverless-operator
+      - openshift-pipelines-operator-rh
+      - odf-operator
+
+    # GPU requirements
+    validate_gpu_nodes: true
+    min_gpu_nodes: 1
+
+    # Storage requirements
+    required_storage_classes:
+      - gp3-csi
+      - ocs-storagecluster-cephfs
+
+    # Values files to validate
+    values_files:
+      - "{{ playbook_dir }}/../../values-global.yaml"
+      - "{{ playbook_dir }}/../../values-hub.yaml"
+
+    # Validation report output
+    cluster_validation_report: "/tmp/cluster-validation-report-{{ ansible_date_time.epoch }}.txt"
+
+    # Debug mode
+    validation_debug: false
+
+  tasks:
+    # ============================================================
+    # Pre-Validation Setup
+    # ============================================================
+
+    - name: Display validation banner
+      debug:
+        msg: |
+          ============================================================
+          Pre-Deployment Validation for Self-Healing Platform
+          ============================================================
+          This playbook validates that your OpenShift cluster meets
+          all requirements for deploying the Self-Healing Platform.
+
+          Validation Report: {{ cluster_validation_report }}
+          ============================================================
+
+    - name: Initialize validation results
+      set_fact:
+        validation_results:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          cluster_name: "{{ lookup('env', 'KUBECONFIG') | default('unknown', true) }}"
+          checks_passed: 0
+          checks_failed: 0
+          checks_warnings: 0
+          checks: []
+
+    # ============================================================
+    # Include Prerequisites Role
+    # ============================================================
+
+    - name: Run standard prerequisites validation
+      include_role:
+        name: validated_patterns_prerequisites
+      vars:
+        vp_debug_mode: "{{ validation_debug }}"
+
+    # ============================================================
+    # Additional Cluster Validation Checks
+    # ============================================================
+
+    - name: Check GPU node availability
+      block:
+        - name: Get GPU nodes
+          kubernetes.core.k8s_info:
+            kind: Node
+            label_selectors:
+              - "nvidia.com/gpu.present=true"
+          register: gpu_nodes
+          when: validate_gpu_nodes | bool
+
+        - name: Validate GPU node count
+          assert:
+            that:
+              - gpu_nodes.resources | length >= min_gpu_nodes
+            fail_msg: "Found {{ gpu_nodes.resources | length }} GPU nodes, need at least {{ min_gpu_nodes }}"
+            success_msg: "✅ GPU nodes available: {{ gpu_nodes.resources | length }}"
+          when: validate_gpu_nodes | bool
+          register: gpu_check
+
+        - name: Record GPU validation result
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'GPU Nodes', 'status': 'PASSED', 'details': gpu_nodes.resources | length | string + ' GPU node(s) found'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_passed': validation_results.checks_passed + 1}) }}"
+          when: gpu_check is succeeded
+
+      rescue:
+        - name: Record GPU validation failure
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'GPU Nodes', 'status': 'FAILED', 'details': 'Insufficient GPU nodes'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_failed': validation_results.checks_failed + 1}) }}"
+
+    # ============================================================
+    # Storage Class Validation
+    # ============================================================
+
+    - name: Validate required storage classes
+      block:
+        - name: Get all storage classes
+          kubernetes.core.k8s_info:
+            kind: StorageClass
+          register: storage_classes
+
+        - name: Check each required storage class
+          assert:
+            that:
+              - storage_classes.resources | selectattr('metadata.name', 'equalto', item) | list | length > 0
+            fail_msg: "Storage class {{ item }} not found"
+            success_msg: "✅ Storage class {{ item }} available"
+          loop: "{{ required_storage_classes }}"
+          register: storage_check
+
+        - name: Record storage validation result
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'Storage Classes', 'status': 'PASSED', 'details': 'All required storage classes available'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_passed': validation_results.checks_passed + 1}) }}"
+          when: storage_check is succeeded
+
+      rescue:
+        - name: Record storage validation failure
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'Storage Classes', 'status': 'FAILED', 'details': 'Missing required storage classes'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_failed': validation_results.checks_failed + 1}) }}"
+
+    # ============================================================
+    # Values Files Validation
+    # ============================================================
+
+    - name: Validate values files exist
+      block:
+        - name: Check if values files exist
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop: "{{ values_files }}"
+          register: values_files_check
+
+        - name: Verify all values files found
+          assert:
+            that:
+              - item.stat.exists
+            fail_msg: "Values file not found: {{ item.item }}"
+            success_msg: "✅ Values file found: {{ item.item | basename }}"
+          loop: "{{ values_files_check.results }}"
+          loop_control:
+            label: "{{ item.item | basename }}"
+
+        - name: Check for uncustomized placeholders in values files
+          ansible.builtin.shell: |
+            if grep -q "{{ '{{' }} CLUSTER_DOMAIN {{ '}}' }}" "{{ item }}"; then
+              echo "PLACEHOLDER_FOUND"
+            else
+              echo "OK"
+            fi
+          loop: "{{ values_files }}"
+          register: placeholder_check
+          changed_when: false
+          failed_when: false
+
+        - name: Warn about uncustomized placeholders
+          debug:
+            msg: "⚠️  WARNING: {{ item.item | basename }} contains uncustomized placeholders - run ./scripts/configure-cluster-values.sh"
+          when: item.stdout == "PLACEHOLDER_FOUND"
+          loop: "{{ placeholder_check.results }}"
+          loop_control:
+            label: "{{ item.item | basename }}"
+
+        - name: Record values files validation result
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'Values Files', 'status': 'PASSED', 'details': 'All values files exist'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_passed': validation_results.checks_passed + 1}) }}"
+
+      rescue:
+        - name: Record values files validation failure
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'Values Files', 'status': 'FAILED', 'details': 'Missing values files'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_failed': validation_results.checks_failed + 1}) }}"
+
+    # ============================================================
+    # Git Repository Accessibility
+    # ============================================================
+
+    - name: Validate Git repository accessibility
+      block:
+        - name: Extract Git URL from values-global.yaml
+          ansible.builtin.shell: |
+            yq eval '.git.repoURL' {{ playbook_dir }}/../../values-global.yaml
+          register: git_url_extract
+          changed_when: false
+
+        - name: Set Git URL fact
+          set_fact:
+            git_repo_url: "{{ git_url_extract.stdout }}"
+
+        - name: Test Git repository accessibility (HTTP)
+          ansible.builtin.uri:
+            url: "{{ git_repo_url | regex_replace('\\.git$', '') }}"
+            method: GET
+            status_code: [200, 301, 302, 401, 403]
+            validate_certs: no
+          register: git_http_check
+          when: git_repo_url is match('^https?://')
+          ignore_errors: yes
+
+        - name: Record Git accessibility result
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'Git Repository', 'status': 'WARNING', 'details': 'Git repository accessibility check performed (may require authentication)'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_warnings': validation_results.checks_warnings + 1}) }}"
+
+      rescue:
+        - name: Record Git accessibility warning
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'Git Repository', 'status': 'WARNING', 'details': 'Could not verify git repository accessibility'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_warnings': validation_results.checks_warnings + 1}) }}"
+
+    # ============================================================
+    # Network Connectivity Checks
+    # ============================================================
+
+    - name: Validate network connectivity
+      block:
+        - name: Test connectivity to quay.io (for operator images)
+          ansible.builtin.uri:
+            url: "https://quay.io"
+            method: HEAD
+            status_code: [200, 301, 302]
+          register: quay_check
+          ignore_errors: yes
+
+        - name: Test connectivity to Validated Patterns OCI registry
+          ansible.builtin.uri:
+            url: "https://quay.io/repository/hybridcloudpatterns/pattern-install"
+            method: HEAD
+            status_code: [200, 301, 302]
+          register: patterns_registry_check
+          ignore_errors: yes
+
+        - name: Record network connectivity result
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'Network Connectivity', 'status': 'PASSED', 'details': 'External registries accessible'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_passed': validation_results.checks_passed + 1}) }}"
+          when:
+            - quay_check is succeeded
+            - patterns_registry_check is succeeded
+
+      rescue:
+        - name: Record network connectivity warning
+          set_fact:
+            validation_results: "{{ validation_results | combine({'checks': validation_results.checks + [{'name': 'Network Connectivity', 'status': 'WARNING', 'details': 'Some external registries may not be accessible (OK for air-gapped)'}]}) }}"
+            validation_results: "{{ validation_results | combine({'checks_warnings': validation_results.checks_warnings + 1}) }}"
+
+    # ============================================================
+    # Generate Validation Report
+    # ============================================================
+
+    - name: Generate validation report
+      block:
+        - name: Create validation report
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/validation-report.j2"
+            dest: "{{ cluster_validation_report }}"
+          when: false  # Template doesn't exist yet, skip for now
+
+        - name: Display validation summary
+          debug:
+            msg: |
+              ============================================================
+              Validation Summary
+              ============================================================
+              Timestamp: {{ validation_results.timestamp }}
+
+              Checks Passed:   {{ validation_results.checks_passed }}
+              Checks Failed:   {{ validation_results.checks_failed }}
+              Checks Warnings: {{ validation_results.checks_warnings }}
+
+              {% for check in validation_results.checks %}
+              {{ check.status | upper }}: {{ check.name }} - {{ check.details }}
+              {% endfor %}
+
+              {% if validation_results.checks_failed == 0 %}
+              ✅ Cluster validation PASSED
+              Ready to deploy Self-Healing Platform
+
+              Next steps:
+                1. Review Pattern CR: ./scripts/preview-pattern-cr.sh
+                2. Deploy pattern: make -f common/Makefile operator-deploy
+              {% else %}
+              ❌ Cluster validation FAILED
+              Fix the issues above before deploying
+              {% endif %}
+              ============================================================
+
+        - name: Save validation summary to file
+          ansible.builtin.copy:
+            content: |
+              Cluster Validation Report
+              Generated: {{ validation_results.timestamp }}
+
+              Summary:
+              - Checks Passed:   {{ validation_results.checks_passed }}
+              - Checks Failed:   {{ validation_results.checks_failed }}
+              - Checks Warnings: {{ validation_results.checks_warnings }}
+
+              Detailed Results:
+              {% for check in validation_results.checks %}
+              [{{ check.status }}] {{ check.name }}: {{ check.details }}
+              {% endfor %}
+
+              {% if validation_results.checks_failed == 0 %}
+              OVERALL STATUS: PASSED ✅
+              Cluster is ready for Self-Healing Platform deployment.
+              {% else %}
+              OVERALL STATUS: FAILED ❌
+              Please address the failed checks before proceeding.
+              {% endif %}
+            dest: "{{ cluster_validation_report }}"
+
+        - name: Display report location
+          debug:
+            msg: "Validation report saved to: {{ cluster_validation_report }}"
+
+    # ============================================================
+    # Final Result
+    # ============================================================
+
+    - name: Fail if validation checks failed
+      fail:
+        msg: "Cluster validation failed. See report: {{ cluster_validation_report }}"
+      when: validation_results.checks_failed > 0

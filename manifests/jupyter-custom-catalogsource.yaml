@@ -1,0 +1,7 @@
+---
+# ALTERNATIVE APPROACH: Install operator bundle directly without CatalogSource
+# This approach is simpler but less standard
+# We'll create the operator resources manually from the bundle
+#
+# NOTE: This file is kept for reference but we'll use direct installation instead
+# See: manifests/jupyter-operator-direct-install.yaml

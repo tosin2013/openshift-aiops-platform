@@ -1,0 +1,58 @@
+---
+# Validate NotebookValidationJob CRDs
+# This task validates notebook execution via the Jupyter Notebook Validator Operator
+
+- name: Get NotebookValidationJob resources
+  kubernetes.core.k8s_info:
+    api_version: mlops.mlops.dev/v1alpha1
+    kind: NotebookValidationJob
+    namespace: "{{ validation_namespace | default('self-healing-platform') }}"
+  register: notebook_jobs
+
+- name: Display notebook validation jobs count
+  debug:
+    msg: "Found {{ notebook_jobs.resources | length }} NotebookValidationJob resources"
+
+- name: Check notebook validation job status
+  assert:
+    that:
+      - item.status is defined
+      - item.status.phase is defined
+      - item.status.phase in ['Succeeded', 'Running', 'Pending']
+    fail_msg: "NotebookValidationJob {{ item.metadata.name }} is in unexpected state: {{ item.status.phase | default('Unknown') }}"
+    success_msg: "NotebookValidationJob {{ item.metadata.name }} status: {{ item.status.phase }}"
+  loop: "{{ notebook_jobs.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when: notebook_jobs.resources | length > 0
+
+- name: Count successful validations
+  set_fact:
+    succeeded_count: "{{ notebook_jobs.resources | selectattr('status.phase', 'equalto', 'Succeeded') | list | length }}"
+    failed_count: "{{ notebook_jobs.resources | selectattr('status.phase', 'equalto', 'Failed') | list | length }}"
+    running_count: "{{ notebook_jobs.resources | selectattr('status.phase', 'equalto', 'Running') | list | length }}"
+  when: notebook_jobs.resources | length > 0
+
+- name: Display notebook validation summary
+  debug:
+    msg: |
+      Notebook Validation Summary:
+      - Total: {{ notebook_jobs.resources | length }}
+      - Succeeded: {{ succeeded_count | default(0) }}
+      - Failed: {{ failed_count | default(0) }}
+      - Running: {{ running_count | default(0) }}
+  when: notebook_jobs.resources | length > 0
+
+- name: Fail if any notebook validations failed
+  fail:
+    msg: "{{ failed_count | default(0) }} notebook validation(s) failed"
+  when:
+    - notebook_jobs.resources | length > 0
+    - failed_count | default(0) | int > 0
+
+- name: Display notebook validation success
+  debug:
+    msg: "✅ All {{ notebook_jobs.resources | length }} notebook validations passed"
+  when:
+    - notebook_jobs.resources | length > 0
+    - failed_count | default(0) | int == 0

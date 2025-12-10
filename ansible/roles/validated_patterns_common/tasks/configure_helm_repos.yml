@@ -1,0 +1,38 @@
+---
+# Configure Helm repositories for multisource architecture
+
+- name: Add Validated Patterns Helm repository
+  kubernetes.core.helm_repository:
+    name: validatedpatterns
+    repo_url: https://charts.validatedpatterns.io
+    state: present
+  register: vp_repo
+
+- name: Add Jetstack Helm repository
+  kubernetes.core.helm_repository:
+    name: jetstack
+    repo_url: https://charts.jetstack.io
+    state: present
+  register: jetstack_repo
+
+- name: Add External Secrets Helm repository
+  kubernetes.core.helm_repository:
+    name: external-secrets
+    repo_url: https://external-secrets.github.io/external-secrets
+    state: present
+  register: external_secrets_repo
+
+- name: Update Helm repositories
+  ansible.builtin.command:
+    cmd: helm repo update
+  changed_when: true
+  register: helm_update
+  failed_when: false
+
+- name: Display Helm repository configuration status
+  debug:
+    msg: |
+      ✅ Helm repositories configured:
+      - validatedpatterns: https://charts.validatedpatterns.io
+      - jetstack: https://charts.jetstack.io
+      - external-secrets: https://external-secrets.github.io/external-secrets

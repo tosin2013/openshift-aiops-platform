@@ -1,0 +1,184 @@
+---
+# Deploy cross-namespace RBAC resources
+# These are namespaced resources (Role/RoleBinding) that need to be in
+# cluster-managed namespaces like openshift-monitoring, default, etc.
+# Namespaced ArgoCD cannot create these, so they must be deployed via Ansible
+
+- name: Display cross-namespace RBAC deployment message
+  debug:
+    msg: "Deploying cross-namespace RBAC resources (openshift-monitoring, default, etc.)"
+
+# ==============================================================================
+# OpenShift Monitoring Namespace
+# ==============================================================================
+
+- name: Deploy Role in openshift-monitoring namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: self-healing-workbench-monitoring
+        namespace: openshift-monitoring
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      rules:
+        # Core API resources for data collection
+        - apiGroups: [""]
+          resources: ["pods", "services", "events"]
+          verbs: ["get", "list", "watch"]
+        # Pod logs
+        - apiGroups: [""]
+          resources: ["pods/log"]
+          verbs: ["get"]
+  when: deploy_cross_namespace_rbac | default(true) | bool
+
+- name: Deploy RoleBinding in openshift-monitoring namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: self-healing-workbench-monitoring
+        namespace: openshift-monitoring
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      subjects:
+        - kind: ServiceAccount
+          name: self-healing-workbench
+          namespace: "{{ pattern_namespace }}"
+      roleRef:
+        kind: Role
+        name: self-healing-workbench-monitoring
+        apiGroup: rbac.authorization.k8s.io
+  when: deploy_cross_namespace_rbac | default(true) | bool
+
+# ==============================================================================
+# Default Namespace
+# ==============================================================================
+
+- name: Deploy Role in default namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: self-healing-workbench-default
+        namespace: default
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      rules:
+        # Core API resources for data collection
+        - apiGroups: [""]
+          resources: ["pods", "services", "events", "configmaps", "secrets"]
+          verbs: ["get", "list", "watch"]
+        # Pod logs
+        - apiGroups: [""]
+          resources: ["pods/log"]
+          verbs: ["get"]
+        # Deployments and StatefulSets
+        - apiGroups: ["apps"]
+          resources: ["deployments", "statefulsets", "replicasets"]
+          verbs: ["get", "list", "watch"]
+  when: deploy_cross_namespace_rbac | default(true) | bool
+
+- name: Deploy RoleBinding in default namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: self-healing-workbench-default
+        namespace: default
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      subjects:
+        - kind: ServiceAccount
+          name: self-healing-workbench
+          namespace: "{{ pattern_namespace }}"
+      roleRef:
+        kind: Role
+        name: self-healing-workbench-default
+        apiGroup: rbac.authorization.k8s.io
+  when: deploy_cross_namespace_rbac | default(true) | bool
+
+# ==============================================================================
+# OpenShift Storage Namespace (NooBaa S3)
+# ==============================================================================
+
+- name: Deploy Role in openshift-storage namespace (NooBaa)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: noobaa-secret-reader
+        namespace: openshift-storage
+        labels:
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/managed-by: ansible
+      rules:
+        # Read NooBaa admin secret
+        - apiGroups: [""]
+          resources: ["secrets"]
+          resourceNames: ["noobaa-admin"]
+          verbs: ["get", "list"]
+        # Read S3 route for endpoint URL
+        - apiGroups: ["route.openshift.io"]
+          resources: ["routes"]
+          verbs: ["get", "list"]
+  when:
+    - deploy_cross_namespace_rbac | default(true) | bool
+    - deploy_noobaa_rbac | default(true) | bool
+
+- name: Deploy RoleBinding in openshift-storage namespace (NooBaa)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: self-healing-platform-noobaa-reader
+        namespace: openshift-storage
+        labels:
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/managed-by: ansible
+      subjects:
+        - kind: ServiceAccount
+          name: self-healing-operator
+          namespace: "{{ pattern_namespace }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: noobaa-secret-reader
+  when:
+    - deploy_cross_namespace_rbac | default(true) | bool
+    - deploy_noobaa_rbac | default(true) | bool
+
+- name: Display cross-namespace RBAC deployment status
+  debug:
+    msg: |
+      ✅ Cross-namespace RBAC resources deployed:
+      - openshift-monitoring: Role and RoleBinding
+      - default: Role and RoleBinding
+      - openshift-storage: Role and RoleBinding (NooBaa S3)
+
+      These allow ServiceAccounts to access:
+      - Workbench: Prometheus metrics in openshift-monitoring
+      - Workbench: Test workloads in default namespace
+      - Operator: NooBaa S3 credentials in openshift-storage

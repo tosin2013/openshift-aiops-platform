@@ -1,0 +1,91 @@
+---
+# Deploy Jupyter Notebook Validator Operator using kustomize
+
+- name: Build kustomize overlay path
+  set_fact:
+    kustomize_path: "{{ jupyter_validator_kustomize_base }}/{{ jupyter_validator_kustomize_overlay }}"
+
+- name: Display kustomize path
+  debug:
+    msg: "Deploying from kustomize path: {{ kustomize_path }}"
+
+- name: Deploy operator manifests (excluding Deployment to wait for certs)
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('kubernetes.core.kustomize', dir=kustomize_path) }}"
+    apply: yes
+    wait: no
+  register: kustomize_deploy
+
+- name: Check if webhooks are enabled (cert-manager detected)
+  set_fact:
+    webhooks_enabled: "{{ jupyter_validator_enable_webhooks }}"
+
+- name: Wait for webhook certificate to be ready (if webhooks enabled)
+  kubernetes.core.k8s_info:
+    api_version: cert-manager.io/v1
+    kind: Certificate
+    name: notebook-validator-serving-cert
+    namespace: "{{ jupyter_validator_operator_namespace }}"
+  register: certificate_status
+  until:
+    - certificate_status.resources | length > 0
+    - certificate_status.resources[0].status is defined
+    - certificate_status.resources[0].status.conditions is defined
+    - certificate_status.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0
+  retries: 30
+  delay: 10
+  when: webhooks_enabled | bool
+  ignore_errors: yes
+
+- name: Display certificate status
+  debug:
+    msg: "✅ Webhook certificate ready"
+  when:
+    - webhooks_enabled | bool
+    - certificate_status is defined
+    - certificate_status.resources | length > 0
+
+- name: Wait for webhook-server-cert secret to exist
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: webhook-server-cert
+    namespace: "{{ jupyter_validator_operator_namespace }}"
+  register: webhook_secret
+  until: webhook_secret.resources | length > 0
+  retries: 30
+  delay: 10
+  when: webhooks_enabled | bool
+  ignore_errors: yes
+
+- name: Display secret status
+  debug:
+    msg: "✅ Webhook secret created by cert-manager"
+  when:
+    - webhooks_enabled | bool
+    - webhook_secret is defined
+    - webhook_secret.resources | length > 0
+
+- name: Display deployment result
+  debug:
+    msg: "✅ Operator deployed successfully via kustomize"
+  when: kustomize_deploy is succeeded
+
+- name: Wait for operator deployment to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: notebook-validator-controller-manager
+    namespace: "{{ jupyter_validator_operator_namespace }}"
+  register: operator_deployment
+  until:
+    - operator_deployment.resources | length > 0
+    - operator_deployment.resources[0].status.readyReplicas is defined
+    - operator_deployment.resources[0].status.readyReplicas >= 1
+  retries: 60
+  delay: 10
+
+- name: Display operator pod status
+  debug:
+    msg: "✅ Operator pod ready: {{ operator_deployment.resources[0].metadata.name }}"

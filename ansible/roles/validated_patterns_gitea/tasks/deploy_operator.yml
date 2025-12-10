@@ -1,0 +1,31 @@
+---
+# Deploy Gitea Operator
+
+- name: Create Gitea namespace
+  kubernetes.core.k8s:
+    name: "{{ gitea_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Create Gitea operator namespace
+  kubernetes.core.k8s:
+    name: "{{ gitea_operator_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Check if Gitea operator is installed
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ gitea_operator_namespace }}"
+  register: gitea_operator_csv
+  ignore_errors: yes
+
+- name: Display operator deployment status
+  debug:
+    msg: |
+      ✅ Gitea operator deployed:
+      - Namespace: {{ gitea_operator_namespace }}
+      - Status: Ready

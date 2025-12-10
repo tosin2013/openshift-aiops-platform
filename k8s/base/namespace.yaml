@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: self-healing-platform
+  labels:
+    name: self-healing-platform
+    app.kubernetes.io/component: namespace
+  annotations:
+    openshift.io/description: "Self-Healing Platform namespace for AIOps automation"
+    openshift.io/display-name: "Self-Healing Platform"

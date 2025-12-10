@@ -1,0 +1,28 @@
+---
+title: Tutorials
+description: Learning-oriented guides for newcomers
+---
+
+# Tutorials
+
+Learning-oriented guides for newcomers
+
+## Available Guides
+
+This section contains tutorials documentation following the Diataxis framework.
+
+**Tutorials** are learning-oriented and help newcomers get started:
+- Take the reader through a process step by step
+- Focus on learning by doing
+- Ensure the reader succeeds in accomplishing something
+- Build confidence through success
+
+## Contents
+
+### Getting Started
+
+- **[Getting Started with OpenShift AIOps Platform](./getting-started.md)** - Complete introduction to the Self-Healing Platform, including RHODS access, environment verification, and your first anomaly detection experiment
+
+### Development Guides
+
+- **[Workbench Development Guide](./workbench-development-guide.md)** - Deep dive into developing self-healing algorithms and anomaly detection models in the workbench environment

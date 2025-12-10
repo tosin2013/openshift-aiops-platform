@@ -1,0 +1,31 @@
+# Testing dependencies for notebook validation
+papermill>=2.4.0
+jupyter>=1.0.0
+nbformat>=5.7.0
+nbconvert>=7.0.0
+
+# Data processing and validation
+pandas>=1.5.0
+numpy>=1.21.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# ML libraries for notebook testing
+scikit-learn>=1.1.0
+xgboost>=1.6.0
+lightgbm>=3.3.0
+
+# API and integration testing
+requests>=2.28.0
+prometheus-api-client>=0.5.0
+kubernetes>=24.0.0
+
+# Utilities
+pyyaml>=6.0
+python-dateutil>=2.8.0
+pytz>=2022.1
+
+# Optional: For advanced notebook testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-xdist>=3.0.0  # For parallel test execution

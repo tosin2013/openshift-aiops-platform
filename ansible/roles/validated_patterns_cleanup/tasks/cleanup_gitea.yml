@@ -1,0 +1,38 @@
+---
+# Delete Gitea Namespace (Optional - for development environments)
+
+- name: Display Gitea cleanup warning
+  debug:
+    msg: |
+      ⚠️  Deleting Gitea namespace ({{ cleanup_gitea_namespace }})
+      This will remove the local git repository used for development.
+
+- name: Delete Gitea namespace
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ cleanup_gitea_namespace }}"
+    state: absent
+    wait: no
+    wait_timeout: "{{ cleanup_wait_timeout }}"
+  ignore_errors: yes
+
+- name: Wait for Gitea namespace deletion
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ cleanup_gitea_namespace }}"
+  register: gitea_ns_status
+  until: gitea_ns_status.resources | length == 0
+  retries: 30
+  delay: 10
+  ignore_errors: yes
+
+- name: Display Gitea cleanup status
+  debug:
+    msg: |
+      {% if gitea_ns_status.resources | length == 0 %}
+      ✅ Gitea namespace deleted
+      {% else %}
+      ⚠️  Gitea namespace still exists (may be terminating)
+      {% endif %}

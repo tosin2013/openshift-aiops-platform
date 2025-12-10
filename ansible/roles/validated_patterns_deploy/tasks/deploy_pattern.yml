@@ -1,0 +1,35 @@
+---
+# Deploy pattern via ArgoCD
+
+- name: Create ArgoCD Application for pattern
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: "{{ validated_patterns_pattern_name }}"
+        namespace: openshift-gitops
+      spec:
+        project: default
+        source:
+          repoURL: "{{ validated_patterns_repo_url }}"
+          targetRevision: "{{ validated_patterns_target_revision }}"
+          path: "{{ validated_patterns_pattern_path }}"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: "{{ validated_patterns_namespace }}"
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true
+          syncOptions:
+            - CreateNamespace=true
+
+- name: Display pattern deployment status
+  debug:
+    msg: |
+      ✅ Pattern deployment initiated:
+      - Application: {{ validated_patterns_pattern_name }}
+      - Repository: {{ validated_patterns_repo_url }}
+      - Target: {{ validated_patterns_target_revision }}

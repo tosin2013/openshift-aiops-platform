@@ -1,0 +1,236 @@
+# Comprehensive notebook testing configuration
+# This file defines test parameters, validations, and expectations for each notebook
+
+test_environment:
+  python_version: "3.9"
+  timeout_default: 300  # 5 minutes default timeout
+  temp_directory: "/tmp/notebook_tests"
+  synthetic_data_only: true  # Use synthetic data for CI testing
+
+notebooks:
+  # Data Collection Notebooks
+  "01-data-collection/prometheus-metrics-collection.ipynb":
+    description: "Prometheus metrics collection and processing"
+    timeout: 300
+    parameters:
+      TEST_MODE: true
+      SYNTHETIC_DATA_ONLY: true
+      MAX_METRICS: 100
+      PROMETHEUS_URL: "http://mock-prometheus:9090"
+    expected_outputs:
+      - "metrics_df"
+      - "processed_metrics"
+      - "env_info"
+    data_validations:
+      - variable: "metrics_df"
+        type: "DataFrame"
+        min_rows: 1
+        required_columns: ["timestamp", "value", "metric_name"]
+      - variable: "processed_metrics"
+        type: "dict"
+        required_keys: ["cpu", "memory", "network"]
+      - variable: "env_info"
+        type: "dict"
+        required_keys: ["data_dir", "models_dir"]
+    performance_checks:
+      max_execution_time: 300
+      max_memory_usage: "1GB"
+
+  "01-data-collection/openshift-events-analysis.ipynb":
+    description: "OpenShift events collection and pattern analysis"
+    timeout: 300
+    parameters:
+      TEST_MODE: true
+      SYNTHETIC_DATA_ONLY: true
+      EVENT_COUNT: 50
+      NAMESPACES: ["default", "test-namespace"]
+    expected_outputs:
+      - "events_df"
+      - "event_patterns"
+      - "anomaly_indicators"
+    data_validations:
+      - variable: "events_df"
+        type: "DataFrame"
+        min_rows: 10
+        required_columns: ["timestamp", "type", "reason", "namespace"]
+      - variable: "event_patterns"
+        type: "dict"
+        required_keys: ["event_types", "reasons", "namespaces"]
+      - variable: "anomaly_indicators"
+        type: "dict"
+        required_keys: ["high_warning_rate", "critical_events"]
+
+  "01-data-collection/log-parsing-analysis.ipynb":
+    description: "Container log parsing and error detection"
+    timeout: 300
+    parameters:
+      TEST_MODE: true
+      SYNTHETIC_DATA_ONLY: true
+      LOG_COUNT: 100
+      ERROR_PATTERNS: ["ERROR", "FATAL", "Exception"]
+    expected_outputs:
+      - "logs_df"
+      - "parsed_logs_df"
+      - "error_matches_df"
+      - "log_patterns"
+    data_validations:
+      - variable: "logs_df"
+        type: "DataFrame"
+        min_rows: 50
+        required_columns: ["timestamp", "message", "pod_name"]
+      - variable: "parsed_logs_df"
+        type: "DataFrame"
+        min_rows: 50
+        required_columns: ["level", "structured"]
+      - variable: "error_matches_df"
+        type: "DataFrame"
+        min_rows: 0  # May be empty if no errors
+      - variable: "log_patterns"
+        type: "dict"
+        required_keys: ["log_levels", "error_rate"]
+
+  "01-data-collection/feature-store-demo.ipynb":
+    description: "Feature store implementation with Parquet files"
+    timeout: 400
+    parameters:
+      TEST_MODE: true
+      SYNTHETIC_DATA_ONLY: true
+      FEATURE_COUNT: 50
+      PARQUET_COMPRESSION: "snappy"
+    expected_outputs:
+      - "feature_store"
+      - "infra_df"
+      - "app_df"
+      - "anomaly_df"
+    data_validations:
+      - variable: "infra_df"
+        type: "DataFrame"
+        min_rows: 20
+        required_columns: ["timestamp", "cpu_usage_percent", "memory_usage_percent"]
+      - variable: "app_df"
+        type: "DataFrame"
+        min_rows: 10
+        required_columns: ["timestamp", "requests_per_minute", "error_rate_percent"]
+      - variable: "anomaly_df"
+        type: "DataFrame"
+        min_rows: 5
+        required_columns: ["timestamp", "resource_pressure", "cpu_memory_ratio"]
+      - variable: "feature_store"
+        type: "object"
+        has_methods: ["write_features", "read_features", "list_versions"]
+
+  # Anomaly Detection Notebooks
+  "02-anomaly-detection/isolation-forest-implementation.ipynb":
+    description: "Isolation Forest anomaly detection implementation"
+    timeout: 600
+    parameters:
+      TEST_MODE: true
+      SYNTHETIC_DATA_ONLY: true
+      N_SAMPLES: 100
+      CONTAMINATION: 0.1
+    expected_outputs:
+      - "model"
+      - "anomaly_scores"
+      - "predictions"
+      - "model_metrics"
+    data_validations:
+      - variable: "anomaly_scores"
+        type: "ndarray"
+        min_length: 50
+        value_range: [-1, 1]
+      - variable: "predictions"
+        type: "ndarray"
+        min_length: 50
+        unique_values: [-1, 1]
+      - variable: "model"
+        type: "object"
+        has_methods: ["fit", "predict", "decision_function"]
+      - variable: "model_metrics"
+        type: "dict"
+        required_keys: ["precision", "recall", "f1_score"]
+
+  # Self-Healing Logic Notebooks
+  "03-self-healing-logic/coordination-engine-integration.ipynb":
+    description: "Coordination engine integration and MCP client testing"
+    timeout: 300
+    parameters:
+      TEST_MODE: true
+      MOCK_COORDINATION_ENGINE: true
+      COORDINATION_ENGINE_URL: "http://mock-coordination-engine:8080"
+    expected_outputs:
+      - "mcp_client"
+      - "integration_status"
+      - "test_results"
+      - "health_check_result"
+    data_validations:
+      - variable: "integration_status"
+        type: "dict"
+        required_keys: ["status", "timestamp", "version"]
+      - variable: "test_results"
+        type: "dict"
+        required_keys: ["health_check", "anomaly_submission", "cluster_health"]
+      - variable: "health_check_result"
+        type: "dict"
+        required_keys: ["status", "response_time"]
+      - variable: "mcp_client"
+        type: "object"
+        has_methods: ["get_cluster_health", "submit_anomaly_data"]
+
+# Global validation rules
+global_validations:
+  # All notebooks should complete within reasonable time
+  max_execution_time: 900  # 15 minutes absolute maximum
+
+  # Memory usage limits
+  max_memory_usage: "2GB"
+
+  # Required environment variables
+  required_env_vars:
+    - "PYTHONPATH"
+
+  # File system checks
+  required_directories:
+    - "/opt/app-root/src/data"
+    - "/opt/app-root/src/models"
+
+  # Common output validations
+  common_outputs:
+    - "env_info"  # All notebooks should have environment info
+
+  # Error patterns that should not appear in outputs
+  forbidden_patterns:
+    - "Traceback (most recent call last)"
+    - "KeyError:"
+    - "ConnectionError:"
+    - "TimeoutError:"
+
+# CI/CD Integration settings
+ci_settings:
+  parallel_execution: false  # Set to true for faster CI (if notebooks are independent)
+  fail_fast: false  # Continue testing other notebooks even if one fails
+  generate_artifacts: true  # Generate test reports and outputs
+  upload_outputs: true  # Upload notebook outputs as CI artifacts
+
+  # Notification settings
+  notify_on_failure: true
+  notify_on_success: false
+
+  # Report formats
+  report_formats:
+    - "json"
+    - "html"
+    - "junit"  # For CI integration
+
+# Performance benchmarks
+performance_benchmarks:
+  "01-data-collection/prometheus-metrics-collection.ipynb":
+    target_execution_time: 120  # 2 minutes
+    max_memory_usage: "512MB"
+
+  "02-anomaly-detection/isolation-forest-implementation.ipynb":
+    target_execution_time: 300  # 5 minutes
+    max_memory_usage: "1GB"
+
+  "03-self-healing-logic/coordination-engine-integration.ipynb":
+    target_execution_time: 60   # 1 minute
+    max_memory_usage: "256MB"

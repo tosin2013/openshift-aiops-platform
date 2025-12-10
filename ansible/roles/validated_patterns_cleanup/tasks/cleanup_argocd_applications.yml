@@ -1,0 +1,52 @@
+---
+# Delete ArgoCD Applications
+
+- name: Get all ArgoCD applications
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    namespace: "{{ cleanup_gitops_namespace }}"
+  register: all_applications
+  ignore_errors: yes
+
+- name: Display applications to be deleted
+  debug:
+    msg: |
+      Found {{ all_applications.resources | length }} ArgoCD applications
+      {% for app in all_applications.resources %}
+      - {{ app.metadata.name }}
+      {% endfor %}
+  when: all_applications.resources is defined and all_applications.resources | length > 0
+
+- name: Delete ArgoCD applications
+  kubernetes.core.k8s:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ item.metadata.name }}"
+    namespace: "{{ cleanup_gitops_namespace }}"
+    state: absent
+    wait: yes
+    wait_timeout: "{{ cleanup_wait_timeout }}"
+  loop: "{{ all_applications.resources }}"
+  when: all_applications.resources is defined
+  ignore_errors: yes
+
+- name: Wait for applications to be deleted
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    namespace: "{{ cleanup_gitops_namespace }}"
+  register: remaining_apps
+  until: remaining_apps.resources | length == 0
+  retries: 30
+  delay: 10
+  ignore_errors: yes
+
+- name: Display application cleanup status
+  debug:
+    msg: |
+      {% if remaining_apps.resources | length == 0 %}
+      ✅ All ArgoCD applications deleted
+      {% else %}
+      ⚠️  {{ remaining_apps.resources | length }} applications still exist
+      {% endif %}

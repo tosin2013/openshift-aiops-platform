@@ -1,0 +1,104 @@
+{{- if .Values.objectStore.enabled }}
+---
+# Job to create S3 buckets in ODF
+# This ensures buckets exist before InferenceServices try to access them
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: s3-bucket-setup
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: s3-bucket-setup
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: self-healing-platform
+  annotations:
+    description: "Creates S3 buckets for model storage and training data"
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: s3-bucket-setup
+        app.kubernetes.io/component: object-store
+    spec:
+      serviceAccountName: self-healing-operator
+      restartPolicy: Never
+      containers:
+      - name: s3-bucket-creator
+        image: amazon/aws-cli:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Creating S3 buckets..."
+
+          # Disable SSL verification for self-signed certificates
+          export AWS_CA_BUNDLE=""
+
+          # Create buckets (ignore if already exist)
+          aws s3 mb s3://{{ .Values.objectStore.buckets.models }} \
+            --endpoint-url "$AWS_S3_ENDPOINT" \
+            --region "$AWS_DEFAULT_REGION" \
+            --no-verify-ssl 2>&1 || echo "Bucket {{ .Values.objectStore.buckets.models }} may already exist"
+
+          aws s3 mb s3://{{ .Values.objectStore.buckets.trainingData }} \
+            --endpoint-url "$AWS_S3_ENDPOINT" \
+            --region "$AWS_DEFAULT_REGION" \
+            --no-verify-ssl 2>&1 || echo "Bucket {{ .Values.objectStore.buckets.trainingData }} may already exist"
+
+          aws s3 mb s3://{{ .Values.objectStore.buckets.inferenceResults }} \
+            --endpoint-url "$AWS_S3_ENDPOINT" \
+            --region "$AWS_DEFAULT_REGION" \
+            --no-verify-ssl 2>&1 || echo "Bucket {{ .Values.objectStore.buckets.inferenceResults }} may already exist"
+
+          # List buckets to verify
+          echo "Listing S3 buckets..."
+          aws s3 ls --endpoint-url "$AWS_S3_ENDPOINT" --region "$AWS_DEFAULT_REGION" --no-verify-ssl
+
+          # Create model directories
+          echo "Creating model directories..."
+          echo '{"model": "placeholder"}' > /tmp/placeholder.json
+
+          aws s3 cp /tmp/placeholder.json s3://{{ .Values.objectStore.buckets.models }}/anomaly-detector/placeholder.json \
+            --endpoint-url "$AWS_S3_ENDPOINT" --region "$AWS_DEFAULT_REGION" --no-verify-ssl || true
+
+          aws s3 cp /tmp/placeholder.json s3://{{ .Values.objectStore.buckets.models }}/predictive-analytics/placeholder.json \
+            --endpoint-url "$AWS_S3_ENDPOINT" --region "$AWS_DEFAULT_REGION" --no-verify-ssl || true
+
+          echo "S3 bucket setup completed successfully!"
+
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: model-storage-config
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: model-storage-config
+              key: AWS_SECRET_ACCESS_KEY
+        - name: AWS_S3_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: model-storage-config
+              key: AWS_S3_ENDPOINT
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            secretKeyRef:
+              name: model-storage-config
+              key: AWS_DEFAULT_REGION
+
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+
+{{- end }}

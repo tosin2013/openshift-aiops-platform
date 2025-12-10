@@ -1,0 +1,193 @@
+---
+# Check for required storage classes based on chart values
+# Purpose: Validate storage classes exist before deployment to fail fast with clear messages
+
+- name: Set default chart values path
+  set_fact:
+    chart_values_path: "{{ helm_chart_path | default('charts/hub') }}/values.yaml"
+    values_hub_path: "values-hub.yaml"
+
+- name: Read chart values to determine required storage classes
+  slurp:
+    src: "{{ chart_values_path }}"
+  register: chart_values_content
+  failed_when: false
+
+- name: Parse storage requirements from chart values
+  set_fact:
+    chart_values: "{{ chart_values_content['content'] | b64decode | from_yaml }}"
+  when: chart_values_content.content is defined
+
+- name: Extract required storage classes
+  set_fact:
+    required_storage_classes:
+      - name: "{{ chart_values.storage.selfHealingData.storageClass | default('gp3-csi') }}"
+        access_mode: "RWO"
+        purpose: "Self-healing data storage"
+      - name: "{{ chart_values.storage.modelArtifacts.storageClass | default('gp3-csi') }}"
+        access_mode: "RWX"
+        purpose: "Model artifacts storage (requires ReadWriteMany for multi-pod access)"
+      - name: "{{ chart_values.storage.workbenchData.storageClass | default('gp3-csi') }}"
+        access_mode: "RWO"
+        purpose: "Workbench data storage"
+  when: chart_values is defined
+
+- name: Get available storage classes
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: StorageClass
+  register: available_storage_classes
+
+- name: Create list of available storage class names
+  set_fact:
+    available_sc_names: "{{ available_storage_classes.resources | map(attribute='metadata.name') | list }}"
+
+- name: Check each required storage class
+  set_fact:
+    missing_storage_classes: >-
+      {% set ns = namespace(missing=[]) %}
+      {% for req_sc in required_storage_classes %}
+        {% if req_sc.name not in available_sc_names %}
+          {% set _ = ns.missing.append(req_sc) %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.missing }}
+  when: required_storage_classes is defined
+
+- name: Display storage class validation results
+  debug:
+    msg: |
+      ========================================
+      Storage Class Validation
+      ========================================
+
+      Required Storage Classes:
+      {% for req_sc in required_storage_classes %}
+      - {{ req_sc.name }} ({{ req_sc.access_mode }})
+        Purpose: {{ req_sc.purpose }}
+        Status: {{ '✅ Available' if req_sc.name in available_sc_names else '❌ MISSING' }}
+      {% endfor %}
+
+      Available Storage Classes on Cluster:
+      {% for sc in available_sc_names %}
+      - {{ sc }}
+      {% endfor %}
+  when: required_storage_classes is defined
+
+- name: Check for RWX-capable storage classes
+  set_fact:
+    has_rwx_storage: >-
+      {{ available_sc_names | select('match', '.*(cephfs|nfs|azurefile|glusterfs|filestore).*') | list | length > 0 }}
+
+- name: Fail if required RWX storage is missing
+  fail:
+    msg: |
+      ❌ CRITICAL: Missing required storage classes
+
+      Missing Storage Classes:
+      {% for missing_sc in missing_storage_classes %}
+      - {{ missing_sc.name }} ({{ missing_sc.access_mode }})
+        Purpose: {{ missing_sc.purpose }}
+      {% endfor %}
+
+      ========================================
+      📦 Action Required: Install Storage
+      ========================================
+
+      The model-artifacts PVC requires ReadWriteMany (RWX) storage for multi-pod access.
+
+      🔧 Option 1: Install OpenShift Data Foundation (ODF)
+
+      Run this to install ODF with CephFS (provides RWX):
+
+      cat <<EOF | oc apply -f -
+      ---
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: openshift-storage
+        labels:
+          openshift.io/cluster-monitoring: "true"
+      ---
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: openshift-storage-operatorgroup
+        namespace: openshift-storage
+      spec:
+        targetNamespaces:
+          - openshift-storage
+      ---
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: odf-operator
+        namespace: openshift-storage
+      spec:
+        channel: stable-4.18
+        name: odf-operator
+        source: redhat-operators
+        sourceNamespace: openshift-marketplace
+        installPlanApproval: Automatic
+      EOF
+
+      Then wait for operator to install:
+        oc get csv -n openshift-storage -w
+
+      Then update chart values to use ODF storage:
+        vi values-hub.yaml
+        # Add:
+        storage:
+          modelArtifacts:
+            storageClass: "ocs-storagecluster-cephfs"
+
+      🔧 Option 2: Use Provider-Specific RWX Storage
+
+      AWS EFS:        efs-sc
+      Azure Files:    azurefile or azurefile-csi
+      GCP Filestore:  filestore-csi
+      NFS:            nfs-client or nfs-csi
+
+      Update values-hub.yaml with your RWX storage class name.
+
+      🔧 Option 3: Accept RWO Limitation (Dev/Test Only)
+
+      Model artifacts will use ReadWriteOnce, limiting to single pod access.
+      This is acceptable for development but NOT for production multi-pod deployments.
+
+      No action needed - deployment will proceed with RWO.
+
+      ========================================
+
+      After installing storage, re-run this deployment.
+  when:
+    - missing_storage_classes is defined
+    - missing_storage_classes | length > 0
+    - missing_storage_classes | selectattr('access_mode', 'equalto', 'RWX') | list | length > 0
+
+- name: Warn if using RWO for model artifacts
+  debug:
+    msg: |
+      ⚠️  WARNING: Model artifacts will use ReadWriteOnce (RWO) storage
+
+      Storage Class: {{ chart_values.storage.modelArtifacts.storageClass | default('gp3-csi') }}
+      Access Mode: ReadWriteOnce (single pod access only)
+
+      Impact:
+      - Only ONE KServe inference pod can access models at a time
+      - Horizontal scaling of inference services will be limited
+      - Acceptable for dev/test, NOT recommended for production
+
+      For production multi-pod access, install RWX-capable storage:
+      - OpenShift Data Foundation (CephFS)
+      - Azure Files, GCP Filestore, AWS EFS
+      - NFS or other RWX storage provider
+
+      Then update values-hub.yaml:
+        storage:
+          modelArtifacts:
+            storageClass: "ocs-storagecluster-cephfs"  # or your RWX class
+  when:
+    - chart_values is defined
+    - not has_rwx_storage
+    - chart_values.storage.modelArtifacts.storageClass | default('gp3-csi') not in (available_sc_names | select('match', '.*(cephfs|nfs|azurefile|glusterfs|filestore).*') | list)

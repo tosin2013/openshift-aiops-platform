@@ -1,0 +1,268 @@
+---
+# Tasks for deploying cluster-scoped resources
+# These resources are deployed separately from the Helm chart
+# to support namespaced ArgoCD deployments (Pattern 3: Hybrid Management Model)
+
+- name: Display role purpose
+  debug:
+    msg: "Deploying cluster-scoped resources separately for namespaced ArgoCD compatibility (Hybrid Management Model)"
+
+- name: Verify cluster connectivity
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    name: default
+  register: cluster_check
+  failed_when: cluster_check.resources | length == 0
+  changed_when: false
+
+- name: Display cluster connection status
+  debug:
+    msg: "✅ Connected to OpenShift cluster"
+
+- name: Create pattern namespace if it doesn't exist
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ pattern_namespace }}"
+        labels:
+          openshift.io/cluster-monitoring: "true"
+          argocd.argoproj.io/managed-by: "self-healing-platform-hub"
+
+# ==============================================================================
+# Namespaced RBAC Resources (CRITICAL - Must be deployed BEFORE ArgoCD sync)
+# ==============================================================================
+# Deploy ServiceAccount, Role, RoleBinding in the pattern namespace
+# These are required by ArgoCD sync hooks (e.g., noobaa-credentials-init)
+# Creating them here breaks the circular dependency:
+#   - Hook needs SA/Role to run
+#   - But ArgoCD won't create SA/Role until hook completes
+#
+# After initial deployment, ArgoCD takes ownership and manages these resources
+
+- name: Deploy namespaced RBAC resources (breaks ArgoCD sync hook circular dependency)
+  include_tasks: deploy_namespace_rbac.yml
+  when: deploy_namespace_rbac | default(true) | bool
+
+- name: Set cluster-scoped resources enabled in values
+  set_fact:
+    cluster_scoped_enabled: true
+
+- name: Extract all cluster-scoped resources from Helm chart
+  shell: |
+    cd {{ playbook_dir }}/.. && \
+    helm template test-release {{ helm_chart_path }} \
+      {{ values_files | map('join', ' -f ') | join(' -f ') | default('') }} \
+      --set rbac.clusterScoped.enabled=true \
+      2>&1 | awk '/^---$/{if (doc) print doc; doc="---"; next} {doc=doc"\n"$0} END{if (doc) print doc}' | \
+    grep -E "^---$|^kind: (ClusterRole|ClusterRoleBinding|ClusterServingRuntime)" | \
+    awk '/^---$/{flag=1; doc=""} flag{doc=doc"\n"$0} /^kind: (ClusterRole|ClusterRoleBinding|ClusterServingRuntime)/{flag=1} /^---$/{if (doc ~ /ClusterRole|ClusterRoleBinding|ClusterServingRuntime/) print doc; flag=0}'
+  register: cluster_resources_raw
+  changed_when: false
+  failed_when: false
+  when: deploy_cluster_resources | bool
+
+- name: Parse cluster-scoped resources as YAML
+  set_fact:
+    cluster_resources: "{{ cluster_resources_raw.stdout | from_yaml_all | list }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_resources_raw.stdout | length > 0
+
+- name: Extract External Secrets ClusterRole
+  set_fact:
+    external_secrets_cluster_role: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterRole') | selectattr('metadata.name', 'match', 'external-secrets.*') | list | first }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.external_secrets.enabled | bool
+    - cluster_resources is defined
+
+- name: Extract External Secrets ClusterRoleBinding
+  set_fact:
+    external_secrets_cluster_role_binding: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterRoleBinding') | selectattr('metadata.name', 'match', 'external-secrets.*') | list | first }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.external_secrets.enabled | bool
+    - cluster_resources is defined
+
+- name: Deploy External Secrets Operator ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ external_secrets_cluster_role }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.external_secrets.enabled | bool
+    - external_secrets_cluster_role is defined
+
+- name: Deploy External Secrets Operator ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ external_secrets_cluster_role_binding }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.external_secrets.enabled | bool
+    - external_secrets_cluster_role_binding is defined
+
+- name: Extract Self-Healing Operator ClusterRole
+  set_fact:
+    operator_cluster_role: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterRole') | selectattr('metadata.name', 'match', 'self-healing-operator.*') | list | first }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.operator.enabled | bool
+    - cluster_resources is defined
+
+- name: Extract Self-Healing Operator ClusterRoleBinding
+  set_fact:
+    operator_cluster_role_binding: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterRoleBinding') | selectattr('metadata.name', 'match', 'self-healing-operator.*') | list | first }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.operator.enabled | bool
+    - cluster_resources is defined
+
+- name: Deploy Self-Healing Operator ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ operator_cluster_role }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.operator.enabled | bool
+    - operator_cluster_role is defined
+
+- name: Deploy Self-Healing Operator ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ operator_cluster_role_binding }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.operator.enabled | bool
+    - operator_cluster_role_binding is defined
+
+- name: Extract Workbench ClusterRole
+  set_fact:
+    workbench_cluster_role: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterRole') | selectattr('metadata.name', 'match', 'self-healing-workbench.*') | list | first }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.workbench.enabled | bool
+    - cluster_resources is defined
+
+- name: Extract Workbench ClusterRoleBindings
+  set_fact:
+    workbench_cluster_role_bindings: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterRoleBinding') | selectattr('metadata.name', 'match', 'self-healing-workbench.*') | list }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.workbench.enabled | bool
+    - cluster_resources is defined
+
+- name: Deploy Workbench ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ workbench_cluster_role }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.workbench.enabled | bool
+    - workbench_cluster_role is defined
+
+- name: Deploy Workbench ClusterRoleBindings
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ workbench_cluster_role_bindings | default([]) }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.workbench.enabled | bool
+    - workbench_cluster_role_bindings is defined
+
+- name: Extract ArgoCD ClusterRole
+  set_fact:
+    argocd_cluster_role: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterRole') | selectattr('metadata.name', 'match', 'self-healing-platform-argocd.*') | list | first }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.argocd.enabled | bool
+    - cluster_resources is defined
+
+- name: Extract ArgoCD ClusterRoleBinding
+  set_fact:
+    argocd_cluster_role_binding: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterRoleBinding') | selectattr('metadata.name', 'match', 'self-healing-platform-argocd.*') | list | first }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.argocd.enabled | bool
+    - cluster_resources is defined
+
+- name: Deploy ArgoCD ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ argocd_cluster_role }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.argocd.enabled | bool
+    - argocd_cluster_role is defined
+
+- name: Deploy ArgoCD ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ argocd_cluster_role_binding }}"
+  when:
+    - deploy_cluster_resources | bool
+    - cluster_rbac.argocd.enabled | bool
+    - argocd_cluster_role_binding is defined
+
+- name: Extract ClusterServingRuntime resources
+  set_fact:
+    cluster_serving_runtimes: "{{ cluster_resources | selectattr('kind', 'equalto', 'ClusterServingRuntime') | list }}"
+  when:
+    - deploy_cluster_resources | bool
+    - kserve.enabled | bool
+    - cluster_resources is defined
+
+- name: Deploy ClusterServingRuntime resources
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item }}"
+  loop: "{{ cluster_serving_runtimes | default([]) }}"
+  when:
+    - deploy_cluster_resources | bool
+    - kserve.enabled | bool
+    - cluster_serving_runtimes is defined
+
+# ==============================================================================
+# Cluster-Scoped RBAC Resources
+# ==============================================================================
+# Deploy ClusterRole/ClusterRoleBindings for workbench, operator, ESO
+# These are cluster-scoped resources that namespaced ArgoCD cannot manage
+
+- name: Deploy cluster-scoped RBAC resources
+  include_tasks: deploy_cluster_rbac.yml
+  when: deploy_cluster_rbac | default(true) | bool
+
+# ==============================================================================
+# Cross-Namespace RBAC Resources
+# ==============================================================================
+# Deploy Role/RoleBindings in cluster-managed namespaces (openshift-monitoring, default)
+# These are namespaced resources but ArgoCD cannot manage them because they're in
+# namespaces outside ArgoCD's control
+
+- name: Deploy cross-namespace RBAC resources
+  include_tasks: deploy_cross_namespace_rbac.yml
+  when: deploy_cross_namespace_rbac | default(true) | bool
+
+- name: Display deployment summary
+  debug:
+    msg: |
+      ✅ Cluster-scoped resources deployment complete:
+      - Namespaced RBAC (ServiceAccount, Role, RoleBinding): {{ 'Deployed' if (deploy_namespace_rbac | default(true)) else 'Skipped' }}
+      - Cluster RBAC (ClusterRole/ClusterRoleBinding): {{ 'Deployed' if (deploy_cluster_rbac | default(true)) else 'Skipped' }}
+      - Cross-Namespace RBAC (openshift-monitoring, default, openshift-storage): {{ 'Deployed' if (deploy_cross_namespace_rbac | default(true)) else 'Skipped' }}
+      - External Secrets RBAC: {{ 'Deployed' if (external_secrets_cluster_role is defined) else 'Skipped' }}
+      - Operator RBAC: {{ 'Deployed' if (operator_cluster_role is defined) else 'Skipped' }}
+      - Workbench RBAC: {{ 'Deployed' if (workbench_cluster_role is defined) else 'Skipped' }}
+      - ArgoCD RBAC: {{ 'Deployed' if (argocd_cluster_role is defined) else 'Skipped' }}
+      - KServe ClusterServingRuntime: {{ 'Deployed' if (cluster_serving_runtimes is defined and cluster_serving_runtimes | length > 0) else 'Skipped' }}
+
+      These resources are now available for namespaced ArgoCD applications to reference.
+
+      ⚠️ CRITICAL: Namespaced RBAC deployed first to avoid ArgoCD sync hook circular dependency
+      (sync hooks like noobaa-credentials-init require these resources to exist before running)
+
+      Next step: Deploy namespaced resources via ArgoCD with rbac.clusterScoped.enabled=false

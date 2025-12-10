@@ -1,0 +1,250 @@
+---
+# Create NotebookValidationJob CRDs with ArgoCD sync wave support
+# Reference: https://github.com/tosin2013/jupyter-notebook-validator-operator/blob/main/docs/WEBHOOK_CONFIGURATION.md
+#
+# Sync waves ensure notebooks execute in the correct order based on data/model dependencies
+
+- name: Display validation configuration
+  debug:
+    msg: |
+      Notebook Validation Configuration:
+      ===================================
+      - Sync waves enabled: {{ notebooks_enable_sync_waves }}
+      - Webhooks enabled: {{ notebooks_enable_webhooks }}
+      - Namespace: {{ notebooks_validation_namespace }}
+      - ServiceAccount: {{ notebooks_service_account }}
+      - Validation tiers: {{ notebooks_validation_tiers }}
+
+# ==============================================================================
+# COMBINE ALL WAVE JOBS INTO SINGLE LIST
+# ==============================================================================
+- name: Build combined jobs list from all waves
+  set_fact:
+    all_notebook_jobs: >-
+      {{
+        (notebooks_wave0_jobs | default([]))
+        + (notebooks_wave1_jobs | default([]))
+        + (notebooks_wave2_jobs | default([]))
+        + (notebooks_wave3_jobs | default([]))
+        + (notebooks_wave4_jobs | default([]))
+        + (notebooks_wave5_jobs | default([]))
+        + (notebooks_wave6_jobs | default([]))
+        + (notebooks_wave7_jobs | default([]))
+        + (notebooks_wave8_jobs | default([]))
+        + (notebooks_wave9_jobs | default([]))
+        + (notebooks_wave10_jobs | default([]))
+      }}
+
+- name: Filter jobs by tier if specified
+  set_fact:
+    filtered_notebook_jobs: >-
+      {%- if notebooks_validation_tiers == 'all' -%}
+      {{ all_notebook_jobs }}
+      {%- elif notebooks_validation_tiers is string -%}
+      {{ all_notebook_jobs | selectattr('tier', 'equalto', notebooks_validation_tiers) | list }}
+      {%- else -%}
+      {{ all_notebook_jobs | selectattr('tier', 'in', notebooks_validation_tiers) | list }}
+      {%- endif -%}
+
+- name: Display jobs to be created
+  debug:
+    msg: "Creating {{ filtered_notebook_jobs | length }} NotebookValidationJob CRDs"
+
+# ==============================================================================
+# CREATE NOTEBOOKVALIDATIONJOB CRDS WITH SYNC WAVE ANNOTATIONS
+# ==============================================================================
+- name: Create NotebookValidationJob CRDs with sync waves
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: mlops.mlops.dev/v1alpha1
+      kind: NotebookValidationJob
+      metadata:
+        name: "{{ item.name }}"
+        namespace: "{{ notebooks_validation_namespace }}"
+        labels:
+          app.kubernetes.io/managed-by: ansible
+          app.kubernetes.io/part-of: self-healing-platform
+          tier: "{{ item.tier | default('tier2') }}"
+          sync-wave: "{{ item.sync_wave | default('5') }}"
+          validation-type: "full-pipeline"
+          gpu-required: "{{ item.gpu_required | default(false) | string | lower }}"
+        annotations:
+          # ArgoCD sync wave annotation for ordered execution
+          argocd.argoproj.io/sync-wave: "{{ item.sync_wave | default('5') }}"
+          # Hook for ArgoCD to wait for completion
+          argocd.argoproj.io/hook: "Sync"
+          argocd.argoproj.io/hook-delete-policy: "HookSucceeded"
+          description: "{{ item.description | default('') }}"
+      spec:
+        notebook:
+          git:
+            url: "{{ item.git_url | default(notebooks_git_url) }}"
+            ref: "{{ item.git_ref | default(notebooks_git_ref) }}"
+            credentialsSecret: "{{ item.git_credentials_secret | default(notebooks_git_credentials_secret) }}"
+          path: "{{ item.path }}"
+        podConfig:
+          containerImage: "{{ item.image | default(lookup('vars', 'notebooks_image_' + item.tier | default('tier2'))) }}"
+          # REQUIRED when webhooks disabled per WEBHOOK_CONFIGURATION.md
+          serviceAccountName: "{{ notebooks_service_account }}"
+          # Use envFrom instead of credentials shorthand (webhook requirement)
+          envFrom:
+            - secretRef:
+                name: "{{ item.git_credentials_secret | default(notebooks_git_credentials_secret) }}"
+                optional: true
+          resources:
+            requests:
+              memory: "{{ item.memory_request | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_memory_request')) }}"
+              cpu: "{{ item.cpu_request | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_cpu_request')) }}"
+            limits:
+              memory: "{{ item.memory_limit | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_memory_limit')) }}"
+              cpu: "{{ item.cpu_limit | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_cpu_limit')) }}"
+        # REQUIRED when webhooks disabled
+        timeout: "{{ item.timeout | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_timeout')) }}"
+  loop: "{{ filtered_notebook_jobs }}"
+  loop_control:
+    label: "wave{{ item.sync_wave | default('5') }}/{{ item.name }}"
+  when: notebooks_enable_sync_waves | bool
+
+# ==============================================================================
+# FALLBACK: CREATE WITHOUT SYNC WAVES (for non-ArgoCD deployments)
+# ==============================================================================
+- name: Create NotebookValidationJob CRDs without sync waves
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: mlops.mlops.dev/v1alpha1
+      kind: NotebookValidationJob
+      metadata:
+        name: "{{ item.name }}"
+        namespace: "{{ notebooks_validation_namespace }}"
+        labels:
+          app.kubernetes.io/managed-by: ansible
+          app.kubernetes.io/part-of: self-healing-platform
+          tier: "{{ item.tier | default('tier2') }}"
+        annotations:
+          description: "{{ item.description | default('') }}"
+      spec:
+        notebook:
+          git:
+            url: "{{ item.git_url | default(notebooks_git_url) }}"
+            ref: "{{ item.git_ref | default(notebooks_git_ref) }}"
+            credentialsSecret: "{{ item.git_credentials_secret | default(notebooks_git_credentials_secret) }}"
+          path: "{{ item.path }}"
+        podConfig:
+          containerImage: "{{ item.image | default(lookup('vars', 'notebooks_image_' + item.tier | default('tier2'))) }}"
+          serviceAccountName: "{{ notebooks_service_account }}"
+          envFrom:
+            - secretRef:
+                name: "{{ item.git_credentials_secret | default(notebooks_git_credentials_secret) }}"
+                optional: true
+          resources:
+            requests:
+              memory: "{{ item.memory_request | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_memory_request')) }}"
+              cpu: "{{ item.cpu_request | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_cpu_request')) }}"
+            limits:
+              memory: "{{ item.memory_limit | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_memory_limit')) }}"
+              cpu: "{{ item.cpu_limit | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_cpu_limit')) }}"
+        timeout: "{{ item.timeout | default(lookup('vars', 'notebooks_' + item.tier | default('tier2') + '_timeout')) }}"
+  loop: "{{ filtered_notebook_jobs }}"
+  loop_control:
+    label: "{{ item.tier | default('tier2') }}/{{ item.name }}"
+  when: not (notebooks_enable_sync_waves | bool)
+
+# ==============================================================================
+# LEGACY SUPPORT: Handle notebooks_validation_jobs if provided
+# ==============================================================================
+- name: Create legacy NotebookValidationJob CRDs (backward compatibility)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: mlops.mlops.dev/v1alpha1
+      kind: NotebookValidationJob
+      metadata:
+        name: "{{ item.name }}"
+        namespace: "{{ notebooks_validation_namespace }}"
+        labels:
+          app.kubernetes.io/managed-by: ansible
+          tier: "{{ item.tier | default('legacy') }}"
+      spec:
+        notebook:
+          git:
+            url: "{{ item.git_url | default(notebooks_git_url) }}"
+            ref: "{{ item.git_ref | default(notebooks_git_ref) }}"
+            credentialsSecret: "{{ item.git_credentials_secret | default(notebooks_git_credentials_secret) }}"
+          path: "{{ item.path }}"
+        podConfig:
+          containerImage: "{{ item.image | default(notebooks_default_image) }}"
+          serviceAccountName: "{{ notebooks_service_account }}"
+          envFrom:
+            - secretRef:
+                name: "{{ item.git_credentials_secret | default(notebooks_git_credentials_secret) }}"
+                optional: true
+          resources:
+            requests:
+              memory: "{{ item.memory_request | default(notebooks_default_memory_request) }}"
+              cpu: "{{ item.cpu_request | default(notebooks_default_cpu_request) }}"
+            limits:
+              memory: "{{ item.memory_limit | default(notebooks_default_memory_limit) }}"
+              cpu: "{{ item.cpu_limit | default(notebooks_default_cpu_limit) }}"
+        timeout: "{{ item.timeout | default(notebooks_default_timeout) }}"
+  loop: "{{ notebooks_validation_jobs | default([]) }}"
+  loop_control:
+    label: "legacy/{{ item.name }}"
+  when: notebooks_validation_jobs | default([]) | length > 0
+
+# ==============================================================================
+# VALIDATION SUMMARY
+# ==============================================================================
+- name: Get all created NotebookValidationJob CRDs
+  kubernetes.core.k8s_info:
+    api_version: mlops.mlops.dev/v1alpha1
+    kind: NotebookValidationJob
+    namespace: "{{ notebooks_validation_namespace }}"
+    label_selectors:
+      - "app.kubernetes.io/managed-by=ansible"
+  register: created_jobs
+
+- name: Group jobs by sync wave
+  set_fact:
+    jobs_by_wave: >-
+      {%- set result = {} -%}
+      {%- for job in created_jobs.resources | default([]) -%}
+        {%- set wave = job.metadata.labels.get('sync-wave', 'none') -%}
+        {%- if wave not in result -%}
+          {%- set _ = result.update({wave: []}) -%}
+        {%- endif -%}
+        {%- set _ = result[wave].append(job.metadata.name) -%}
+      {%- endfor -%}
+      {{ result }}
+  when: notebooks_enable_sync_waves | bool
+
+- name: Display NotebookValidationJob creation summary
+  debug:
+    msg: |
+      NotebookValidationJob Creation Summary
+      ======================================
+      Total Jobs Created: {{ created_jobs.resources | default([]) | length }}
+      Sync Waves Enabled: {{ notebooks_enable_sync_waves }}
+      Namespace: {{ notebooks_validation_namespace }}
+
+      {% if notebooks_enable_sync_waves | bool %}
+      Jobs by Sync Wave:
+      {% for wave in range(0, 11) %}
+      {% set wave_str = wave | string %}
+      {% set wave_jobs = created_jobs.resources | default([]) | selectattr('metadata.labels.sync-wave', 'defined') | selectattr('metadata.labels.sync-wave', 'equalto', wave_str) | list %}
+      {% if wave_jobs | length > 0 %}
+        Wave {{ wave }}: {{ wave_jobs | map(attribute='metadata.name') | list | join(', ') }}
+      {% endif %}
+      {% endfor %}
+      {% endif %}
+
+      Execution Order (ArgoCD):
+      1. ArgoCD syncs Wave 0 first (setup notebooks)
+      2. Waits for Wave 0 jobs to complete (Succeeded status)
+      3. Proceeds to Wave 1, 2, 3... in sequence
+      4. Jobs within same wave run in parallel
+
+      Commands to monitor:
+        oc get notebookvalidationjobs -n {{ notebooks_validation_namespace }} -w
+        oc get notebookvalidationjobs -n {{ notebooks_validation_namespace }} -o custom-columns='NAME:.metadata.name,WAVE:.metadata.labels.sync-wave,STATUS:.status.phase'

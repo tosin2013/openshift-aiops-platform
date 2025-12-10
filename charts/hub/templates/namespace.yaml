@@ -1,0 +1,20 @@
+{{- if .Values.namespace.create }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace.name | default .Values.main.namespace }}
+  labels:
+    {{- include "self-healing-platform.labels" . | nindent 4 }}
+    {{- with .Values.namespace.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    argocd.argoproj.io/instance: hub-gitops
+    argocd.argoproj.io/managed-by: hub-gitops
+    kubernetes.io/metadata.name: {{ .Values.namespace.name | default .Values.main.namespace }}
+  annotations:
+    {{- with .Values.namespace.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    argocd.argoproj.io/sync-wave: "-1"
+{{- end }}

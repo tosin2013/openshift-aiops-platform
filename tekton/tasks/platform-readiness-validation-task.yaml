@@ -1,0 +1,242 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: platform-readiness-validation
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: platform-readiness-validation
+    app.kubernetes.io/component: validation
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  description: |
+    Validate platform infrastructure readiness by executing validation notebook
+
+    This task:
+    1. Installs papermill for programmatic notebook execution
+    2. Executes the platform readiness validation notebook
+    3. Converts output to HTML for artifact storage
+    4. Extracts JSON report for pipeline consumption
+    5. Fails pipeline if validation detects critical issues
+
+    References:
+    - ADR-029: Infrastructure Validation Notebook for User Readiness
+    - ADR-027: CI/CD Pipeline Automation with Tekton and ArgoCD
+
+  params:
+    - name: notebook-path
+      description: Path to validation notebook
+      type: string
+      default: "notebooks/00-setup/00-platform-readiness-validation.ipynb"
+
+    - name: output-path
+      description: Path to save validation report JSON
+      type: string
+      default: "/workspace/source/validation-report.json"
+
+    - name: git-url
+      description: Git repository URL
+      type: string
+      default: "https://github.com/tosin2013/openshift-aiops-platform.git"
+
+    - name: git-revision
+      description: Git revision (branch, tag, or commit)
+      type: string
+      default: "main"
+
+  workspaces:
+    - name: source
+      description: Workspace containing the cloned repository
+      mountPath: /workspace/source
+
+  results:
+    - name: validation-status
+      description: Overall validation status (PASSED/FAILED/DEGRADED)
+
+    - name: checks-passed
+      description: Number of checks passed
+
+    - name: checks-failed
+      description: Number of checks failed
+
+    - name: checks-warnings
+      description: Number of checks with warnings
+
+    - name: report-path
+      description: Path to JSON validation report
+
+  steps:
+    - name: clone-repository
+      image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:v0.40.2
+      script: |
+        #!/bin/sh
+        set -e
+
+        echo "Cloning repository: $(params.git-url)"
+        echo "Revision: $(params.git-revision)"
+
+        cd /workspace/source
+        git clone $(params.git-url) .
+        git checkout $(params.git-revision)
+
+        echo "✅ Repository cloned successfully"
+        ls -la
+
+    - name: install-dependencies
+      image: quay.io/modh/runtime-images:jupyter-datascience-ubi9-python-3.11-2025.1
+      workingDir: /workspace/source
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=" * 80
+        echo "INSTALLING VALIDATION DEPENDENCIES"
+        echo "=" * 80
+        echo ""
+
+        # Install papermill for programmatic notebook execution
+        echo "⏳ Installing papermill..."
+        pip install --quiet papermill nbconvert
+
+        # Install additional dependencies
+        echo "⏳ Installing validation dependencies..."
+        pip install --quiet boto3 requests
+
+        echo "✅ Dependencies installed"
+        echo ""
+
+        # Verify installations
+        echo "Installed packages:"
+        pip list | grep -E 'papermill|nbconvert|boto3|requests'
+
+    - name: execute-notebook
+      image: quay.io/modh/runtime-images:jupyter-datascience-ubi9-python-3.11-2025.1
+      workingDir: /workspace/source
+      env:
+        - name: PYTHONPATH
+          value: "/workspace/source"
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=" * 80
+        echo "EXECUTING PLATFORM READINESS VALIDATION NOTEBOOK"
+        echo "=" * 80
+        echo ""
+
+        # Create output directory
+        mkdir -p /workspace/source/.config
+
+        # Execute notebook with papermill
+        echo "⏳ Running validation notebook..."
+        papermill \
+          $(params.notebook-path) \
+          /tmp/validation-output.ipynb \
+          --log-output \
+          --log-level INFO \
+          --cwd /workspace/source
+
+        echo "✅ Notebook execution complete"
+        echo ""
+
+        # Convert to HTML for artifact storage
+        echo "⏳ Converting to HTML..."
+        jupyter nbconvert \
+          --to html \
+          /tmp/validation-output.ipynb \
+          --output /workspace/source/validation-report.html
+
+        echo "✅ HTML report generated: /workspace/source/validation-report.html"
+
+        # Check if JSON report was generated
+        if [ -f "/workspace/source/.config/validation-report.json" ]; then
+          echo "✅ JSON report found"
+          cp /workspace/source/.config/validation-report.json $(params.output-path)
+        else
+          echo "❌ JSON report not found"
+          exit 1
+        fi
+
+    - name: analyze-results
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      workingDir: /workspace/source
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=" * 80
+        echo "ANALYZING VALIDATION RESULTS"
+        echo "=" * 80
+        echo ""
+
+        # Install jq for JSON parsing
+        microdnf install -y jq
+
+        # Parse validation report
+        REPORT=$(params.output-path)
+
+        if [ ! -f "$REPORT" ]; then
+          echo "❌ Validation report not found: $REPORT"
+          exit 1
+        fi
+
+        # Extract summary
+        STATUS=$(jq -r '.validation_status' $REPORT)
+        TOTAL=$(jq -r '.summary.total_checks' $REPORT)
+        PASSED=$(jq -r '.summary.passed' $REPORT)
+        FAILED=$(jq -r '.summary.failed' $REPORT)
+        WARNINGS=$(jq -r '.summary.warnings' $REPORT)
+
+        echo "Validation Status: $STATUS"
+        echo "Total Checks: $TOTAL"
+        echo "✅ Passed: $PASSED"
+        echo "❌ Failed: $FAILED"
+        echo "⚠️  Warnings: $WARNINGS"
+        echo ""
+
+        # Write results
+        echo -n "$STATUS" > $(results.validation-status.path)
+        echo -n "$PASSED" > $(results.checks-passed.path)
+        echo -n "$FAILED" > $(results.checks-failed.path)
+        echo -n "$WARNINGS" > $(results.checks-warnings.path)
+        echo -n "$(params.output-path)" > $(results.report-path.path)
+
+        # Display failed checks if any
+        if [ "$FAILED" -gt 0 ]; then
+          echo "=" * 80
+          echo "FAILED CHECKS DETAILS"
+          echo "=" * 80
+          echo ""
+          jq '.checks[] | select(.status == "FAILED") | {component, check, details, remediation}' $REPORT
+          echo ""
+        fi
+
+        # Display warnings if any
+        if [ "$WARNINGS" -gt 5 ]; then
+          echo "=" * 80
+          echo "WARNINGS (MORE THAN 5 - REVIEW RECOMMENDED)"
+          echo "=" * 80
+          echo ""
+          jq '.checks[] | select(.status == "WARNING") | {component, check, details}' $REPORT | head -20
+          echo ""
+        fi
+
+        # Fail pipeline if validation failed
+        if [ "$STATUS" = "FAILED" ]; then
+          echo "❌ PLATFORM VALIDATION FAILED"
+          echo "Platform is not ready for notebook execution"
+          echo "Review failed checks above and apply remediations"
+          exit 1
+        elif [ "$STATUS" = "DEGRADED" ]; then
+          echo "⚠️  PLATFORM VALIDATION DEGRADED"
+          echo "Platform has warnings but may be usable"
+          echo "Review warnings and determine if blocking for your use case"
+          echo "Continuing pipeline (not failing on DEGRADED status)..."
+        else
+          echo "✅ PLATFORM VALIDATION PASSED"
+          echo "Platform is ready for notebook execution"
+        fi
+
+        echo ""
+        echo "📄 Full report available at: $(params.output-path)"
+        echo "📄 HTML report available at: /workspace/source/validation-report.html"

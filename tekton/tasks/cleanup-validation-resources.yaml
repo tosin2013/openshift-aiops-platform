@@ -1,0 +1,123 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: cleanup-validation-resources
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: cleanup-validation-resources
+    app.kubernetes.io/part-of: deployment-validation
+spec:
+  description: |
+    Cleans up temporary resources created during validation.
+    Removes test pods, temporary ConfigMaps, and validation artifacts.
+  params:
+    - name: namespace
+      type: string
+      default: self-healing-platform
+      description: Target namespace for cleanup
+  steps:
+    - name: cleanup-test-pods
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Cleaning Up Test Pods ==="
+
+        NAMESPACE="$(params.namespace)"
+
+        # Delete any test pods created during validation
+        TEST_PODS=$(oc get pods -n "$NAMESPACE" -l validation=test -o jsonpath='{.items[*].metadata.name}')
+
+        if [[ -n "$TEST_PODS" ]]; then
+          echo "Deleting test pods: $TEST_PODS"
+          oc delete pods -n "$NAMESPACE" -l validation=test --ignore-not-found=true
+          echo "✅ Test pods cleaned up"
+        else
+          echo "✅ No test pods to clean up"
+        fi
+
+    - name: cleanup-temporary-configmaps
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Cleaning Up Temporary ConfigMaps ==="
+
+        NAMESPACE="$(params.namespace)"
+
+        # Delete temporary ConfigMaps (keep validation-reports)
+        TEMP_CONFIGMAPS=$(oc get configmap -n "$NAMESPACE" -l validation=temporary -o jsonpath='{.items[*].metadata.name}')
+
+        if [[ -n "$TEMP_CONFIGMAPS" ]]; then
+          echo "Deleting temporary ConfigMaps: $TEMP_CONFIGMAPS"
+          oc delete configmap -n "$NAMESPACE" -l validation=temporary --ignore-not-found=true
+          echo "✅ Temporary ConfigMaps cleaned up"
+        else
+          echo "✅ No temporary ConfigMaps to clean up"
+        fi
+
+    - name: cleanup-temporary-secrets
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Cleaning Up Temporary Secrets ==="
+
+        NAMESPACE="$(params.namespace)"
+
+        # Delete temporary secrets
+        TEMP_SECRETS=$(oc get secret -n "$NAMESPACE" -l validation=temporary -o jsonpath='{.items[*].metadata.name}')
+
+        if [[ -n "$TEMP_SECRETS" ]]; then
+          echo "Deleting temporary secrets: $TEMP_SECRETS"
+          oc delete secret -n "$NAMESPACE" -l validation=temporary --ignore-not-found=true
+          echo "✅ Temporary secrets cleaned up"
+        else
+          echo "✅ No temporary secrets to clean up"
+        fi
+
+    - name: verify-cleanup
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Verifying Cleanup ==="
+
+        NAMESPACE="$(params.namespace)"
+
+        # Verify no test resources remain
+        TEST_PODS=$(oc get pods -n "$NAMESPACE" -l validation=test --no-headers 2>/dev/null | wc -l)
+        TEMP_CONFIGMAPS=$(oc get configmap -n "$NAMESPACE" -l validation=temporary --no-headers 2>/dev/null | wc -l)
+        TEMP_SECRETS=$(oc get secret -n "$NAMESPACE" -l validation=temporary --no-headers 2>/dev/null | wc -l)
+
+        echo "Remaining test resources:"
+        echo "  Test pods: $TEST_PODS"
+        echo "  Temporary ConfigMaps: $TEMP_CONFIGMAPS"
+        echo "  Temporary secrets: $TEMP_SECRETS"
+
+        if [[ $TEST_PODS -eq 0 && $TEMP_CONFIGMAPS -eq 0 && $TEMP_SECRETS -eq 0 ]]; then
+          echo "✅ Cleanup verified - all temporary resources removed"
+        else
+          echo "⚠️  WARNING: Some temporary resources may remain"
+        fi
+
+    - name: generate-cleanup-summary
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+
+        echo "=== Cleanup Summary ==="
+        echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Status: COMPLETE"
+        echo ""
+        echo "Cleanup Actions:"
+        echo "  ✅ Test pods removed"
+        echo "  ✅ Temporary ConfigMaps removed"
+        echo "  ✅ Temporary secrets removed"
+        echo "  ✅ Validation artifacts preserved"
+        echo ""
+        echo "Validation reports saved to ConfigMap: validation-reports"

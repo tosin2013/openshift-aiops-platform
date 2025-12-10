@@ -1,0 +1,159 @@
+__pycache__/
+*.py[cod]
+*~
+*.swp
+*.swo
+values-secret.yaml
+.*.expected.yaml
+.vscode
+pattern-vault.init
+pattern-vault.init.bak
+super-linter.log
+golang-external-secrets/Chart.lock
+hashicorp-vault/Chart.lock
+tum-workspace.sh
+
+# Python virtual environments
+venv/
+env/
+ENV/
+.venv
+.env
+.env.*
+*.egg-info/
+dist/
+build/
+
+# IDE and editor files
+.idea/
+*.iml
+.DS_Store
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+*~
+
+# Developer notes and logs (local development only)
+.dev-notes/
+*.log
+reference-repo/validated-patterns-ansible-toolkit
+
+# Local reference repositories (not to be committed)
+my-pattern/
+token
+
+# Sensitive configuration files (contain credentials)
+files/optional-configs/rhsm-activation.env
+files/optional-configs/oc-install.env
+
+# Ansible Navigator artifacts
+ansible/playbooks/*-artifact-*.json
+*-artifact-*.json
+
+# Developer artifacts and status files (AI-generated clutter prevention)
+*-SUMMARY*.md
+*-REPORT*.md
+*-ANALYSIS*.md
+*SESSION-*.md
+*COMPLETE-*.md
+*PHASE*.md
+*TIER*.md
+*EXECUTION-*.md
+OPERATOR-FEEDBACK.md
+CREDENTIALS-SETUP.md
+CURSOR_COMMANDS.md
+CLAUDE.md
+FILES-COMPARISON.md
+
+# Validation and test outputs
+validation-*.txt
+validation-*.log
+test-*.sh
+
+# Downloaded binaries and archives
+*.tar.gz
+tkn_*
+
+# Backup directories
+backups/
+
+# AI-generated context files
+.mcp-server-context.md
+
+# Gitea credentials (local development)
+giteuserpass.md
+
+# API keys and credentials (CRITICAL - DO NOT COMMIT)
+.gemini/
+.gemini/settings.json
+.context7/
+*.key
+*.pem
+*.crt
+*_rsa
+*_rsa.pub
+
+# ⚠️ SECURITY: Ansible configuration with embedded tokens
+ansible.cfg.local
+**/ansible.cfg.local
+context/_build/configs/ansible.cfg
+
+# ⚠️ SECURITY: Secret values files (contain credentials)
+values-secret.yaml
+values-secret*.yaml
+**/values-secret*.yaml
+values-credentials.yaml
+
+# ⚠️ SECURITY: User-specific configuration files (may contain cluster-specific settings)
+# These files should be customized per deployment and not shared
+values-hub.yaml
+values-global.yaml
+
+# ⚠️ SECURITY: Environment files with secrets
+.env.production
+.env.local
+.env.*.local
+*-credentials.env
+
+# ⚠️ SECURITY: Kubernetes secret manifests (if created locally)
+*-secrets.yaml
+*-secret.yaml
+secret-*.yaml
+
+# ⚠️ SECURITY: Backup files that might contain secrets
+*.backup
+*.bak
+*.old
+*.orig
+
+# ⚠️ SECURITY: Security incident response files
+SECURITY-INCIDENT-*.md
+
+# Node.js dependencies (should not be in repository)
+node_modules/
+package-lock.json
+
+# Cursor/IDE specific files
+.cursor/
+.cursor-tutor/
+.cursorrules
+
+# Collection tarballs (downloaded dependencies)
+collections/*.tar.gz
+
+# Local development scripts
+*-workspace.sh
+deploy-gitea.sh
+deploy-gitea.yaml
+
+# Ansible logs
+ansible-navigator.log
+docs/context/research/*.md

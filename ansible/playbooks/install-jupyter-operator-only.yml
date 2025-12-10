@@ -1,0 +1,56 @@
+---
+# Playbook to install ONLY the Jupyter Notebook Validator Operator
+# This bypasses the full platform setup and just installs the operator
+#
+# Usage:
+#   ansible-playbook ansible/playbooks/install-jupyter-operator-only.yml
+#
+# This will:
+# 1. Create the OperatorHub.io CatalogSource (if needed)
+# 2. Install the operator via OLM Subscription
+# 3. Wait for the operator to be ready
+#
+# Note: This uses the operatorhubio-catalog by default, but you can override
+# with custom variables if needed.
+
+- name: Install Jupyter Notebook Validator Operator Only
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Override these if needed
+    notebooks_operator_enabled: true
+    notebooks_install_method: "olm"
+    notebooks_operator_namespace: "openshift-operators"
+    notebooks_operator_channel: "alpha"
+    notebooks_operator_catalog_source: "operatorhubio-catalog"
+    notebooks_operator_catalog_namespace: "openshift-marketplace"
+    notebooks_operator_version: "v1.0.4-ocp4.20"
+    notebooks_create_operatorhubio_catalog: true
+    notebooks_operatorhubio_catalog_image: "quay.io/operatorhubio/catalog:latest"
+    notebooks_enable_webhooks: false
+
+  tasks:
+    - name: Include operator deployment tasks
+      ansible.builtin.include_role:
+        name: validated_patterns_notebooks
+        tasks_from: deploy_operator
+      when: notebooks_operator_enabled | bool
+
+    - name: Verify operator deployment
+      ansible.builtin.include_role:
+        name: validated_patterns_notebooks
+        tasks_from: verify_operator
+      when: notebooks_operator_enabled | bool
+
+    - name: Display operator status
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ notebooks_operator_namespace }}"
+      register: csv_info
+
+    - name: Show installed CSVs
+      ansible.builtin.debug:
+        msg: "Installed CSVs: {{ csv_info.resources | map(attribute='metadata.name') | list }}"

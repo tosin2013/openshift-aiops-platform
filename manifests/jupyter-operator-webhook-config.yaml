@@ -1,0 +1,81 @@
+---
+# Self-signed ClusterIssuer for webhook certificates
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+# Certificate for webhook server
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: webhook-server-cert
+  namespace: jupyter-notebook-validator-system
+spec:
+  secretName: webhook-server-cert
+  dnsNames:
+  - notebook-validator-webhook-service.jupyter-notebook-validator-system.svc
+  - notebook-validator-webhook-service.jupyter-notebook-validator-system.svc.cluster.local
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+---
+# Validating Webhook Configuration
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: notebook-validator-validating-webhook-configuration
+  annotations:
+    cert-manager.io/inject-ca-from: jupyter-notebook-validator-system/webhook-server-cert
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: notebook-validator-webhook-service
+      namespace: jupyter-notebook-validator-system
+      path: /validate-mlops-mlops-dev-v1alpha1-notebookvalidationjob
+  failurePolicy: Fail
+  name: vnotebookvalidationjob.kb.io
+  rules:
+  - apiGroups:
+    - mlops.mlops.dev
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - notebookvalidationjobs
+  sideEffects: None
+---
+# Mutating Webhook Configuration
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: notebook-validator-mutating-webhook-configuration
+  annotations:
+    cert-manager.io/inject-ca-from: jupyter-notebook-validator-system/webhook-server-cert
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: notebook-validator-webhook-service
+      namespace: jupyter-notebook-validator-system
+      path: /mutate-mlops-mlops-dev-v1alpha1-notebookvalidationjob
+  failurePolicy: Fail
+  name: mnotebookvalidationjob.kb.io
+  rules:
+  - apiGroups:
+    - mlops.mlops.dev
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - notebookvalidationjobs
+  sideEffects: None

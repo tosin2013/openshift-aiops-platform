@@ -1,0 +1,47 @@
+---
+# Simple Volume Test - Using emptyDir (no PVC required)
+# Tests that the operator correctly mounts volumes into validation pods
+apiVersion: mlops.mlops.dev/v1alpha1
+kind: NotebookValidationJob
+metadata:
+  name: test-volume-simple
+  namespace: jupyter-notebook-validator-system
+  labels:
+    test: volume-support
+    test-type: simple
+spec:
+  notebook:
+    git:
+      url: "https://github.com/jupyter/notebook-examples.git"
+      ref: "master"
+    path: "notebook-examples/Notebook/What is the Jupyter Notebook.ipynb"
+  podConfig:
+    containerImage: "quay.io/jupyter/minimal-notebook:latest"
+    serviceAccountName: "default"
+    resources:
+      limits:
+        cpu: "1"
+        memory: "2Gi"
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+    # Test volume mounts with emptyDir
+    volumes:
+      - name: test-data
+        emptyDir: {}
+      - name: test-models
+        emptyDir: {}
+    volumeMounts:
+      - name: test-data
+        mountPath: /mnt/data
+      - name: test-models
+        mountPath: /mnt/models
+    # Test environment variables
+    env:
+      - name: TEST_VAR
+        value: "volume-test"
+      - name: DATA_PATH
+        value: "/mnt/data"
+      - name: MODEL_PATH
+        value: "/mnt/models"
+  timeout: "10m"

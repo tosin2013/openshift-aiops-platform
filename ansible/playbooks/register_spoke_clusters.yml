@@ -1,0 +1,204 @@
+---
+# Playbook: Register Spoke Clusters with ACM Hub
+# Purpose: Automate the process of registering edge clusters with the hub cluster
+# Usage: ansible-playbook ansible/playbooks/register_spoke_clusters.yml \
+#          -e "hub_cluster=hub-cluster spoke_clusters=spoke-1,spoke-2"
+
+- name: Register Spoke Clusters with ACM Hub
+  hosts: localhost
+  gather_facts: yes
+  vars:
+    hub_cluster: "hub-cluster"
+    spoke_clusters: []
+    acm_namespace: "open-cluster-management"
+    import_namespace: "open-cluster-management"
+    timeout_seconds: 300
+
+  tasks:
+    - name: Validate prerequisites
+      block:
+        - name: Check oc command availability
+          command: oc version
+          register: oc_version
+          changed_when: false
+          failed_when: oc_version.rc != 0
+
+        - name: Check kubectl command availability
+          command: kubectl version --client
+          register: kubectl_version
+          changed_when: false
+          failed_when: kubectl_version.rc != 0
+
+        - name: Check jq command availability
+          command: jq --version
+          register: jq_version
+          changed_when: false
+          failed_when: jq_version.rc != 0
+
+        - name: Validate hub cluster context
+          command: oc config get-contexts {{ hub_cluster }}
+          register: hub_context
+          changed_when: false
+          failed_when: hub_context.rc != 0
+
+      rescue:
+        - name: Prerequisites check failed
+          fail:
+            msg: "Prerequisites check failed. Ensure oc, kubectl, jq are installed and hub cluster context exists."
+
+    - name: Switch to hub cluster context
+      command: oc config use-context {{ hub_cluster }}
+      changed_when: false
+
+    - name: Verify ACM is installed on hub
+      block:
+        - name: Check MultiClusterHub status
+          command: oc get multiclusterhub -n {{ acm_namespace }} -o jsonpath='{.items[0].status.phase}'
+          register: mch_status
+          changed_when: false
+
+        - name: Fail if MultiClusterHub not ready
+          fail:
+            msg: "MultiClusterHub is not ready. Current status: {{ mch_status.stdout }}"
+          when: mch_status.stdout != "Running"
+
+    - name: Register each spoke cluster
+      block:
+        - name: Create ManagedCluster resource for each spoke
+          command: |
+            oc apply -f - <<EOF
+            apiVersion: cluster.open-cluster-management.io/v1
+            kind: ManagedCluster
+            metadata:
+              name: {{ item }}
+              labels:
+                cloud: openstack
+                region: edge
+                cluster-type: spoke
+                workload: self-healing
+            spec:
+              hubAcceptsClient: true
+              leaseDurationSeconds: 60
+            EOF
+          loop: "{{ spoke_clusters }}"
+          register: managed_cluster_result
+          changed_when: "'created' in managed_cluster_result.stdout or 'configured' in managed_cluster_result.stdout"
+
+        - name: Wait for ManagedCluster to be created
+          command: oc get managedcluster {{ item }} -n {{ acm_namespace }}
+          register: managed_cluster_check
+          until: managed_cluster_check.rc == 0
+          retries: 10
+          delay: 5
+          loop: "{{ spoke_clusters }}"
+          changed_when: false
+
+        - name: Extract klusterlet manifests for each spoke
+          block:
+            - name: Get klusterlet CRDs
+              command: |
+                oc get secret -n {{ acm_namespace }} {{ item }}-import \
+                  -o jsonpath='{.data.crds\.yaml}' | base64 -d
+              register: klusterlet_crds
+              loop: "{{ spoke_clusters }}"
+              changed_when: false
+
+            - name: Get klusterlet import manifests
+              command: |
+                oc get secret -n {{ acm_namespace }} {{ item }}-import \
+                  -o jsonpath='{.data.import\.yaml}' | base64 -d
+              register: klusterlet_import
+              loop: "{{ spoke_clusters }}"
+              changed_when: false
+
+            - name: Save klusterlet manifests to files
+              copy:
+                content: "{{ item.stdout }}"
+                dest: "/tmp/{{ item.item }}-crds.yaml"
+              loop: "{{ klusterlet_crds.results }}"
+              changed_when: false
+
+            - name: Save klusterlet import manifests to files
+              copy:
+                content: "{{ item.stdout }}"
+                dest: "/tmp/{{ item.item }}-import.yaml"
+              loop: "{{ klusterlet_import.results }}"
+              changed_when: false
+
+    - name: Deploy klusterlet to spoke clusters
+      block:
+        - name: Deploy klusterlet to each spoke
+          block:
+            - name: Switch to spoke cluster context
+              command: oc config use-context {{ item }}
+              changed_when: false
+
+            - name: Apply klusterlet CRDs
+              command: oc apply -f /tmp/{{ item }}-crds.yaml
+              register: crds_apply
+              changed_when: "'created' in crds_apply.stdout or 'configured' in crds_apply.stdout"
+
+            - name: Apply klusterlet import manifests
+              command: oc apply -f /tmp/{{ item }}-import.yaml
+              register: import_apply
+              changed_when: "'created' in import_apply.stdout or 'configured' in import_apply.stdout"
+
+            - name: Wait for klusterlet to be ready
+              command: >
+                oc get pods -n open-cluster-management-agent
+                -l app=klusterlet-agent -o jsonpath='{.items[0].status.phase}'
+              register: klusterlet_status
+              until: klusterlet_status.stdout == "Running"
+              retries: 30
+              delay: 10
+              changed_when: false
+
+          loop: "{{ spoke_clusters }}"
+
+    - name: Verify spoke cluster registration
+      block:
+        - name: Switch back to hub cluster context
+          command: oc config use-context {{ hub_cluster }}
+          changed_when: false
+
+        - name: Check managed cluster status
+          command: >
+            oc get managedcluster {{ item }}
+            -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}'
+          register: cluster_status
+          until: cluster_status.stdout == "True"
+          retries: 30
+          delay: 10
+          loop: "{{ spoke_clusters }}"
+          changed_when: false
+
+        - name: Display registration summary
+          debug:
+            msg: |
+              Spoke cluster registration complete!
+              Hub Cluster: {{ hub_cluster }}
+              Registered Spokes: {{ spoke_clusters | join(', ') }}
+
+              Next steps:
+              1. Verify cluster connectivity: oc get managedcluster -o wide
+              2. Deploy applications using ApplicationSets
+              3. Configure policies for cluster management
+              4. Monitor cluster health in ACM console
+
+    - name: Cleanup temporary files
+      file:
+        path: "/tmp/{{ item }}-{{ file_type }}.yaml"
+        state: absent
+      loop: "{{ spoke_clusters }}"
+      loop_control:
+        loop_var: item
+      vars:
+        file_types:
+          - crds
+          - import
+      changed_when: false
+
+  handlers:
+    - name: Display error message
+      debug:
+        msg: "Error during spoke cluster registration. Check logs for details."

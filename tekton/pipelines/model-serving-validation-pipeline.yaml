@@ -1,0 +1,80 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: model-serving-validation-pipeline
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: model-serving-validation-pipeline
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  description: |
+    Specialized validation pipeline for KServe model serving infrastructure.
+    Focuses on model deployment, inference endpoints, and performance metrics.
+
+    Validation Flow:
+    1. Prerequisites Check (cluster, tools, RBAC)
+    2. Operator Validation (KServe, GPU, Storage)
+    3. Storage Validation (model storage, S3 connectivity)
+    4. Model Serving Validation (InferenceServices, endpoints, pods)
+    5. Inference Testing (model predictions, latency)
+    6. Performance Metrics (throughput, latency, resource usage)
+    7. Report Generation (model serving summary)
+
+  params:
+    - name: namespace
+      type: string
+      default: self-healing-platform
+      description: Target namespace for model serving validation
+    - name: cluster-version
+      type: string
+      default: "4.18"
+      description: Minimum required OpenShift version
+    - name: model-namespace
+      type: string
+      default: self-healing-platform
+      description: Namespace where models are deployed
+
+  tasks:
+    - name: validate-prerequisites
+      taskRef:
+        name: validate-prerequisites
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: cluster-version
+          value: $(params.cluster-version)
+
+    - name: validate-operators
+      taskRef:
+        name: validate-operators
+      runAfter:
+        - validate-prerequisites
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+    - name: validate-storage
+      taskRef:
+        name: validate-storage
+      runAfter:
+        - validate-operators
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+    - name: validate-model-serving
+      taskRef:
+        name: validate-model-serving
+      runAfter:
+        - validate-storage
+      params:
+        - name: namespace
+          value: $(params.model-namespace)
+
+  finally:
+    - name: cleanup-validation-resources
+      taskRef:
+        name: cleanup-validation-resources
+      params:
+        - name: namespace
+          value: $(params.model-namespace)

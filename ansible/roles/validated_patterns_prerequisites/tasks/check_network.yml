@@ -1,0 +1,38 @@
+---
+# Check network connectivity
+
+- name: Get cluster API URL
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Infrastructure
+    name: cluster
+  register: cluster_info
+  failed_when: cluster_info.resources | length == 0
+
+- name: Extract API URL
+  set_fact:
+    api_url: "{{ cluster_info.resources[0].status.apiServerURL }}"
+
+- name: Test API connectivity
+  uri:
+    url: "{{ api_url }}/api/v1"
+    method: GET
+    validate_certs: no
+    status_code: [200, 401, 403]
+  register: api_test
+  failed_when: api_test.status not in [200, 401, 403]
+
+- name: Display API connectivity status
+  debug:
+    msg: "✅ API server is reachable at {{ api_url }}"
+
+- name: Check DNS resolution (optional - may fail outside cluster)
+  command: "nslookup kubernetes.default.svc.cluster.local"
+  register: dns_test
+  changed_when: false
+  failed_when: false
+  ignore_errors: yes
+
+- name: Display DNS status
+  debug:
+    msg: "{{ '✅ DNS resolution is working' if dns_test.rc == 0 else 'ℹ️  DNS check skipped (running outside cluster)' }}"

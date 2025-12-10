@@ -1,0 +1,51 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Override image for OCP 4.18
+images:
+  - name: controller
+    newName: quay.io/takinosh/jupyter-notebook-validator-operator
+    newTag: 1.0.7-ocp4.18
+
+# Disable webhooks by removing webhook-related resources
+patches:
+  # Disable webhooks in the deployment
+  - target:
+      kind: Deployment
+      name: notebook-validator-controller-manager
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: ENABLE_WEBHOOKS
+            value: "false"
+          - name: PLATFORM
+            value: "openshift"
+          - name: GIT_INIT_IMAGE
+            value: ""
+  # Remove webhook volume mount
+  - target:
+      kind: Deployment
+      name: notebook-validator-controller-manager
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/volumeMounts
+      - op: remove
+        path: /spec/template/spec/volumes
+  # Remove webhook port
+  - target:
+      kind: Deployment
+      name: notebook-validator-controller-manager
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/ports
+
+# Remove webhook-related resources
+components:
+  []
+
+# Don't include certmanager and webhook directories
+# (kustomize will skip them if we don't patch them)

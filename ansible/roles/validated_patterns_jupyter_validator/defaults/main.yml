@@ -1,0 +1,29 @@
+---
+# Jupyter Notebook Validator Operator Configuration
+# Deployment: kustomize (NOT OLM - operator not in marketplace yet)
+# Reference: ADR-029, ADR-030
+
+# Enable operator deployment
+jupyter_validator_operator_enabled: true
+
+# OpenShift version (determines overlay selection)
+jupyter_validator_openshift_version: "4.18"
+
+# Kustomize overlay path (relative to project root)
+jupyter_validator_kustomize_base: "k8s/operators/jupyter-notebook-validator"
+jupyter_validator_kustomize_overlay: "overlays/dev-ocp4.18"
+
+# Operator namespace (from kustomize base)
+jupyter_validator_operator_namespace: "jupyter-notebook-validator-operator"
+
+# Validation namespace (where NotebookValidationJob CRs are created)
+jupyter_validator_validation_namespace: "self-healing-platform"
+
+# Operator images (from overlays)
+jupyter_validator_images:
+  ocp4.18: "quay.io/takinosh/jupyter-notebook-validator-operator:1.0.7-ocp4.18"
+  ocp4.19: "quay.io/takinosh/jupyter-notebook-validator-operator:1.0.8-ocp4.19"
+  ocp4.20: "quay.io/takinosh/jupyter-notebook-validator-operator:1.0.9-ocp4.20"
+
+# Webhook configuration (auto-detected based on cert-manager for production)
+jupyter_validator_enable_webhooks: false

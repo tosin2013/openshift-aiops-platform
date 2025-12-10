@@ -1,0 +1,104 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: deployment-validation-pipeline
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: deployment-validation-pipeline
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  description: |
+    Main validation pipeline for OpenShift AIOps Self-Healing Platform.
+    Orchestrates all validation tasks in sequence to ensure complete platform health.
+
+    Validation Flow:
+    1. Prerequisites Check (cluster, tools, RBAC)
+    2. Operator Validation (GitOps, AI, KServe, GPU, ODF)
+    3. Storage Validation (classes, PVCs, ODF, S3)
+    4. Model Serving Validation (InferenceServices, endpoints, pods)
+    5. Coordination Engine Validation (deployment, health, API, DB)
+    6. Monitoring Validation (Prometheus, alerts, Grafana, logging)
+    7. End-to-End Workflow Validation (complete pipelines)
+    8. Report Generation (summary and recommendations)
+
+  params:
+    - name: namespace
+      type: string
+      default: self-healing-platform
+      description: Target namespace for validation
+    - name: cluster-version
+      type: string
+      default: "4.18"
+      description: Minimum required OpenShift version
+
+  tasks:
+    - name: validate-prerequisites
+      taskRef:
+        name: validate-prerequisites
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: cluster-version
+          value: $(params.cluster-version)
+
+    - name: validate-operators
+      taskRef:
+        name: validate-operators
+      runAfter:
+        - validate-prerequisites
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+    - name: validate-storage
+      taskRef:
+        name: validate-storage
+      runAfter:
+        - validate-operators
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+    - name: validate-model-serving
+      taskRef:
+        name: validate-model-serving
+      runAfter:
+        - validate-storage
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+    - name: validate-coordination-engine
+      taskRef:
+        name: validate-coordination-engine
+      runAfter:
+        - validate-model-serving
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+    - name: validate-monitoring
+      taskRef:
+        name: validate-monitoring
+      runAfter:
+        - validate-coordination-engine
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+    - name: generate-validation-report
+      taskRef:
+        name: generate-validation-report
+      runAfter:
+        - validate-monitoring
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+  finally:
+    - name: cleanup-validation-resources
+      taskRef:
+        name: cleanup-validation-resources
+      params:
+        - name: namespace
+          value: $(params.namespace)

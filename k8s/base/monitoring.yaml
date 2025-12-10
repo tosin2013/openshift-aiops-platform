@@ -1,0 +1,158 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: self-healing-platform
+  labels:
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: self-healing-platform
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+    scheme: http
+    scrapeTimeout: 10s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'mcp_server_.*'
+      targetLabel: component
+      replacement: 'mcp-server'
+  - port: coordination-metrics
+    interval: 15s
+    path: /metrics
+    scheme: http
+    scrapeTimeout: 10s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'coordination_engine_.*'
+      targetLabel: component
+      replacement: 'coordination-engine'
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mcp-server-metrics
+  labels:
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cluster-health-mcp-server
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+    scheme: http
+    scrapeTimeout: 10s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'mcp_server_.*'
+      targetLabel: service
+      replacement: 'mcp-server'
+    - sourceLabels: [__name__]
+      regex: 'process_.*|go_.*|nodejs_.*'
+      targetLabel: type
+      replacement: 'runtime'
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: coordination-engine-metrics
+  labels:
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: self-healing-platform
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: coordination-engine
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+    scheme: http
+    scrapeTimeout: 10s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'coordination_engine_.*'
+      targetLabel: service
+      replacement: 'coordination-engine'
+    - sourceLabels: [__name__]
+      regex: 'flask_.*|python_.*'
+      targetLabel: type
+      replacement: 'runtime'
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: self-healing-platform-alerts
+  labels:
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+  - name: self-healing.rules
+    interval: 30s
+    rules:
+    - alert: SelfHealingPlatformDown
+      expr: up{job="self-healing-platform"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        component: platform
+      annotations:
+        summary: "Self-Healing Platform is down"
+        description: "The Self-Healing Platform has been down for more than 5 minutes."
+        runbook_url: "https://docs.example.com/runbooks/platform-down"
+
+    - alert: CoordinationEngineDown
+      expr: up{job="coordination-engine"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        component: coordination-engine
+      annotations:
+        summary: "Coordination Engine is down"
+        description: "The Coordination Engine has been down for more than 2 minutes."
+
+    - alert: HighNodeCPUUsage
+      expr: (1 - rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+        component: infrastructure
+      annotations:
+        summary: "High CPU usage detected on node {{ $labels.instance }}"
+        description: "Node {{ $labels.instance }} has CPU usage above 80% for more than 10 minutes."
+
+    - alert: NodeConfigurationDrift
+      expr: mco_node_config_drift_detected > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: machine-config
+      annotations:
+        summary: "Node configuration drift detected"
+        description: "Configuration drift detected on {{ $labels.node }}. Automated remediation may be triggered."
+
+    - alert: ModelServingLatencyHigh
+      expr: histogram_quantile(0.95, rate(kserve_request_duration_seconds_bucket[5m])) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: model-serving
+      annotations:
+        summary: "Model serving latency is high"
+        description: "95th percentile latency for model serving is above 100ms for more than 5 minutes."
+
+    - alert: AnomalyDetectionAccuracyLow
+      expr: model_accuracy{model="anomaly-detector"} < 0.8
+      for: 15m
+      labels:
+        severity: critical
+        component: ai-model
+      annotations:
+        summary: "Anomaly detection model accuracy is low"
+        description: "Model accuracy has dropped below 80% threshold for more than 15 minutes."

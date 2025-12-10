@@ -1,0 +1,189 @@
+---
+# Wait for OpenShift GitOps to be deployed by Validated Patterns Operator
+
+- name: Wait for openshift-gitops namespace to be created
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ validated_patterns_target_namespace }}"
+  register: gitops_namespace
+  until: gitops_namespace.resources | length > 0
+  retries: "{{ vp_gitops_ready_retries }}"
+  delay: "{{ vp_gitops_ready_delay }}"
+
+- name: Display GitOps namespace status
+  debug:
+    msg: |
+      ✅ OpenShift GitOps namespace created
+      Namespace: {{ validated_patterns_target_namespace }}
+      Status: {{ gitops_namespace.resources[0].status.phase | default('Active') }}
+
+- name: Wait for OpenShift GitOps operator to be installed
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: gitops_operator
+  until:
+    - gitops_operator.resources | length > 0
+    - gitops_operator.resources | selectattr('metadata.name', 'search', 'openshift-gitops') | list | length > 0
+  retries: "{{ vp_gitops_ready_retries }}"
+  delay: "{{ vp_gitops_ready_delay }}"
+
+- name: Get GitOps operator CSV name
+  set_fact:
+    gitops_csv_name: "{{ (gitops_operator.resources | selectattr('metadata.name', 'search', 'openshift-gitops') | list | first).metadata.name }}"
+
+- name: Wait for GitOps operator to be ready
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ gitops_csv_name }}"
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: gitops_operator_status
+  until:
+    - gitops_operator_status.resources | length > 0
+    - gitops_operator_status.resources[0].status.phase == "Succeeded"
+  retries: "{{ vp_gitops_ready_retries }}"
+  delay: "{{ vp_gitops_ready_delay }}"
+
+- name: Display GitOps operator status
+  debug:
+    msg: |
+      ✅ OpenShift GitOps operator ready
+      CSV: {{ gitops_csv_name }}
+      Phase: {{ gitops_operator_status.resources[0].status.phase }}
+
+- name: Wait for ArgoCD instance to be created
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: openshift-gitops
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: argocd_instance
+  until: argocd_instance.resources | length > 0
+  retries: "{{ vp_gitops_ready_retries }}"
+  delay: "{{ vp_gitops_ready_delay }}"
+
+- name: Wait for ArgoCD instance to be available
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: openshift-gitops
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: argocd_status
+  until:
+    - argocd_status.resources | length > 0
+    - argocd_status.resources[0].status is defined
+    - argocd_status.resources[0].status.phase | default('') == "Available"
+  retries: "{{ vp_gitops_ready_retries }}"
+  delay: "{{ vp_gitops_ready_delay }}"
+  ignore_errors: yes
+
+- name: Display ArgoCD instance status
+  debug:
+    msg: |
+      ✅ ArgoCD instance deployed
+      Name: openshift-gitops
+      Namespace: {{ validated_patterns_target_namespace }}
+      Phase: {{ argocd_status.resources[0].status.phase | default('Deploying') }}
+
+- name: Wait for ArgoCD server pod to be running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ validated_patterns_target_namespace }}"
+    label_selectors:
+      - "app.kubernetes.io/name=openshift-gitops-server"
+  register: argocd_server_pod
+  until:
+    - argocd_server_pod.resources | length > 0
+    - argocd_server_pod.resources[0].status.phase == "Running"
+  retries: "{{ vp_gitops_ready_retries }}"
+  delay: "{{ vp_gitops_ready_delay }}"
+
+- name: Display ArgoCD server pod status
+  debug:
+    msg: |
+      ✅ ArgoCD server pod running
+      Pod: {{ argocd_server_pod.resources[0].metadata.name }}
+      Status: {{ argocd_server_pod.resources[0].status.phase }}
+
+- name: Wait for clustergroup application to be created
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ validated_patterns_pattern_name }}-{{ validated_patterns_cluster_group_name }}"
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: clustergroup_app
+  until: clustergroup_app.resources | length > 0
+  retries: "{{ vp_clustergroup_ready_retries }}"
+  delay: "{{ vp_clustergroup_ready_delay }}"
+  ignore_errors: yes
+
+- name: Display clustergroup application status
+  debug:
+    msg: |
+      {% if clustergroup_app.resources | length > 0 %}
+      ✅ Clustergroup application created
+      Name: {{ validated_patterns_pattern_name }}-{{ validated_patterns_cluster_group_name }}
+      Namespace: {{ validated_patterns_target_namespace }}
+      {% else %}
+      ⏳ Clustergroup application not yet created (this is normal)
+      Expected name: {{ validated_patterns_pattern_name }}-{{ validated_patterns_cluster_group_name }}
+      {% endif %}
+
+- name: Wait for clustergroup application to be healthy and synced
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ validated_patterns_pattern_name }}-{{ validated_patterns_cluster_group_name }}"
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: clustergroup_status
+  until:
+    - clustergroup_status.resources | length > 0
+    - clustergroup_status.resources[0].status is defined
+    - clustergroup_status.resources[0].status.health is defined
+    - clustergroup_status.resources[0].status.health.status == "Healthy"
+    - clustergroup_status.resources[0].status.sync is defined
+    - clustergroup_status.resources[0].status.sync.status == "Synced"
+  retries: "{{ vp_clustergroup_ready_retries }}"
+  delay: "{{ vp_clustergroup_ready_delay }}"
+  ignore_errors: yes
+
+- name: Display final clustergroup application status
+  debug:
+    msg: |
+      {% if clustergroup_status.resources | length > 0 and clustergroup_status.resources[0].status is defined %}
+      ✅ Clustergroup application status
+      Name: {{ validated_patterns_pattern_name }}-{{ validated_patterns_cluster_group_name }}
+      Health: {{ clustergroup_status.resources[0].status.health.status | default('Unknown') }}
+      Sync: {{ clustergroup_status.resources[0].status.sync.status | default('Unknown') }}
+      {% else %}
+      ⏳ Clustergroup application still deploying
+      This may take several minutes. Check ArgoCD UI for progress.
+      Expected name: {{ validated_patterns_pattern_name }}-{{ validated_patterns_cluster_group_name }}
+      {% endif %}
+
+- name: Get ArgoCD route
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: openshift-gitops-server
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: argocd_route
+
+- name: Display ArgoCD access information
+  debug:
+    msg: |
+      ========================================
+      ArgoCD Access Information
+      ========================================
+      URL: https://{{ argocd_route.resources[0].spec.host }}
+
+      To get admin password:
+      oc get secret openshift-gitops-cluster -n {{ validated_patterns_target_namespace }} -o jsonpath='{.data.admin\.password}' | base64 -d
+
+      Monitor deployment progress in ArgoCD UI
+      ========================================
+  when: argocd_route.resources | length > 0

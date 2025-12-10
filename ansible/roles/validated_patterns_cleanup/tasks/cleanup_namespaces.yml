@@ -1,0 +1,46 @@
+---
+# Delete Application Namespaces
+
+- name: Check application namespaces
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+  register: namespace_check
+  loop: "{{ cleanup_app_namespaces }}"
+  ignore_errors: yes
+
+- name: Display namespaces to be deleted
+  debug:
+    msg: |
+      Deleting application namespaces:
+      {% for ns in cleanup_app_namespaces %}
+      - {{ ns }}
+      {% endfor %}
+
+- name: Delete application namespaces
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+    state: absent
+    wait: no
+    wait_timeout: "{{ cleanup_wait_timeout }}"
+  loop: "{{ cleanup_app_namespaces }}"
+  ignore_errors: yes
+
+- name: Wait for namespaces to be deleted
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ item }}"
+  register: namespace_status
+  until: namespace_status.resources | length == 0
+  retries: 30
+  delay: 10
+  loop: "{{ cleanup_app_namespaces }}"
+  ignore_errors: yes
+
+- name: Display namespace cleanup status
+  debug:
+    msg: "✅ Application namespaces cleanup initiated"

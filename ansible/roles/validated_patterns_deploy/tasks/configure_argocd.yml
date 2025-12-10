@@ -1,0 +1,68 @@
+---
+# Configure ArgoCD for pattern deployment
+
+- name: Check if ArgoCD is installed
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: openshift-gitops
+  register: argocd_ns
+  failed_when: argocd_ns.resources | length == 0
+
+- name: Create pattern namespace
+  kubernetes.core.k8s:
+    name: "{{ validated_patterns_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+
+# Configure custom resource health checks for ArgoCD
+# These handle resources that have non-standard health semantics
+- name: Configure ArgoCD resource health checks
+  kubernetes.core.k8s:
+    state: patched
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: openshift-gitops
+    namespace: openshift-gitops
+    definition:
+      spec:
+        resourceHealthChecks:
+          # PVC: WaitForFirstConsumer PVCs stay Pending until used
+          - group: ""
+            kind: PersistentVolumeClaim
+            check: "{{ lookup('file', 'pvc-health-check.lua') }}"
+          # InferenceService: Models are trained after deployment
+          - group: "serving.kserve.io"
+            kind: InferenceService
+            check: "{{ lookup('file', 'inferenceservice-health-check.lua') }}"
+          # ExternalSecret: Source secrets may not exist immediately
+          - group: "external-secrets.io"
+            kind: ExternalSecret
+            check: "{{ lookup('file', 'externalsecret-health-check.lua') }}"
+  register: argocd_health_checks
+  when: validated_patterns_configure_argocd_health_checks | default(true)
+
+- name: Wait for ArgoCD to restart with new configuration
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-gitops
+    label_selectors:
+      - app.kubernetes.io/name=openshift-gitops-application-controller
+  register: argocd_controller
+  until: argocd_controller.resources | length > 0 and argocd_controller.resources[0].status.phase == "Running"
+  retries: 30
+  delay: 10
+  when: argocd_health_checks.changed | default(false)
+
+- name: Display ArgoCD configuration status
+  debug:
+    msg: |
+      ✅ ArgoCD configured:
+      - ArgoCD namespace: openshift-gitops
+      - Pattern namespace: {{ validated_patterns_namespace }}
+      - Health checks configured: {{ argocd_health_checks.changed | default(false) }}
+        - PVC (WaitForFirstConsumer support)
+        - InferenceService (model pending support)
+        - ExternalSecret (source secret sync)

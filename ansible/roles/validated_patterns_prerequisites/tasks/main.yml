@@ -1,0 +1,36 @@
+---
+# Main tasks for validated_patterns_prerequisites role
+# Purpose: Validate cluster is ready for pattern deployment
+
+- name: Display role purpose
+  debug:
+    msg: "Validating cluster prerequisites for Validated Patterns deployment"
+
+- name: Include OpenShift version check
+  include_tasks: check_openshift_version.yml
+
+- name: Include operator check
+  include_tasks: check_operators.yml
+
+- name: Include cluster resources check
+  include_tasks: check_cluster_resources.yml
+
+- name: Include network connectivity check
+  include_tasks: check_network.yml
+
+- name: Include RBAC permissions check
+  include_tasks: check_rbac.yml
+
+- name: Include storage check
+  include_tasks: check_storage.yml
+
+- name: Include required storage classes check
+  include_tasks: check_required_storage_classes.yml
+
+- name: Display validation summary
+  debug:
+    msg: |
+      ✅ All prerequisite checks passed!
+      - OpenShift version: {{ ocp_version }}
+      - Cluster nodes: {{ cluster_nodes.resources | length }}
+      - Storage classes: {{ storage_classes.resources | length }} ({{ default_storage_class | length }} default)

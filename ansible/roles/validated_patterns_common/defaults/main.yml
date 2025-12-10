@@ -1,0 +1,28 @@
+---
+# Defaults for validated_patterns_common role
+
+# rhvp.cluster_utils collection version
+validated_patterns_rhvp_collection_version: "1.0.0"
+
+# clustergroup-chart version (must be 0.9.*)
+validated_patterns_clustergroup_chart_version: "0.9.*"
+
+# Pattern name
+validated_patterns_pattern_name: "common"
+
+# Target revision for GitOps
+validated_patterns_target_revision: "main"
+
+# Multisource configuration
+validated_patterns_multisource_enabled: true
+
+# GitOps configuration (matches VP Operator)
+validated_patterns_gitops_namespace: "openshift-gitops"
+validated_patterns_argocd_instance_name: "openshift-gitops"
+
+# When true, skip clustergroup deployment (Helm/VP Operator handles it)
+# Set to true when running as prerequisite for operator-deploy
+validated_patterns_use_operator: false
+
+# When true, skip clustergroup chart deployment (operator-deploy does this)
+validated_patterns_skip_clustergroup_deploy: false

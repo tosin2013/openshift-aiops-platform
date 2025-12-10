@@ -1,0 +1,27 @@
+---
+# Main tasks for validated_patterns_deploy role
+# Purpose: Deploy selected Validated Pattern via ArgoCD
+
+- name: Display role purpose
+  debug:
+    msg: "Deploying Validated Pattern: {{ validated_patterns_pattern_name }}"
+
+- name: Include pattern validation
+  include_tasks: validate_pattern.yml
+
+- name: Include ArgoCD configuration
+  include_tasks: configure_argocd.yml
+
+- name: Include pattern deployment
+  include_tasks: deploy_pattern.yml
+
+- name: Include deployment verification
+  include_tasks: verify_deployment.yml
+
+- name: Display deployment summary
+  debug:
+    msg: |
+      ✅ Pattern deployed successfully!
+      - Pattern: {{ validated_patterns_pattern_name }}
+      - Namespace: {{ validated_patterns_namespace }}
+      - Status: Deployed

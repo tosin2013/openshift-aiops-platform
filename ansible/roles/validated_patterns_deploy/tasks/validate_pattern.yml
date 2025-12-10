@@ -1,0 +1,21 @@
+---
+# Validate pattern exists and is accessible
+
+- name: Check if pattern directory exists
+  stat:
+    path: "{{ validated_patterns_pattern_path }}"
+  register: pattern_dir
+  failed_when: not pattern_dir.stat.exists
+
+- name: Check if pattern has values file
+  stat:
+    path: "{{ validated_patterns_pattern_path }}/values.yaml"
+  register: pattern_values
+  failed_when: not pattern_values.stat.exists
+
+- name: Display pattern validation status
+  debug:
+    msg: |
+      ✅ Pattern validated:
+      - Path: {{ validated_patterns_pattern_path }}
+      - Values file: {{ validated_patterns_pattern_path }}/values.yaml

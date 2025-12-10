@@ -1,0 +1,44 @@
+{{- if .Values.objectStore.enabled }}
+---
+# ObjectBucketClaim for Model Storage
+# Creates S3 bucket and credentials in OpenShift Data Foundation (NooBaa)
+# Credentials are automatically synced to openshift-storage namespace
+# External Secrets Operator reads these credentials and creates model-storage-config secret
+#
+# Reference: ADR-024 - External Secrets for Model Storage
+# Workflow:
+# 1. OBC creates bucket and credentials in openshift-storage namespace
+# 2. External Secrets Operator reads OBC secret
+# 3. ExternalSecret creates model-storage-config in self-healing-platform namespace
+# 4. Applications use model-storage-config secret for S3 access
+
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: model-storage
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: model-storage-obc
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: self-healing-platform
+  annotations:
+    description: "ObjectBucketClaim for model storage in OpenShift Data Foundation"
+spec:
+  # Generate bucket name automatically
+  generateBucketName: model-storage
+
+  # Use OpenShift Data Foundation (NooBaa) storage class
+  storageClassName: openshift-storage.noobaa.io
+
+---
+# Note: After OBC is created, a secret named "model-storage-obc-secret" will be created
+# in the openshift-storage namespace with the following keys:
+# - AWS_ACCESS_KEY_ID
+# - AWS_SECRET_ACCESS_KEY
+# - AWS_S3_ENDPOINT
+# - AWS_S3_BUCKET
+#
+# External Secrets Operator will read this secret and create model-storage-config
+# in the self-healing-platform namespace for use by applications.
+
+{{- end }}

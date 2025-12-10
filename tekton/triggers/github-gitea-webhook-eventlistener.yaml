@@ -1,0 +1,286 @@
+# GitHub/Gitea Webhook EventListener for CI/CD Automation
+# ADR-027: CI/CD Pipeline Automation
+# Supports both GitHub and Gitea webhooks for development and production
+
+---
+# ⚠️ SECURITY NOTICE: This Secret should be managed via External Secrets Operator
+# This is a PLACEHOLDER for demonstration purposes only
+#
+# RECOMMENDED: Create via External Secrets Operator:
+#   apiVersion: external-secrets.io/v1beta1
+#   kind: ExternalSecret
+#   metadata:
+#     name: github-webhook-secret
+#     namespace: openshift-pipelines
+#   spec:
+#     refreshInterval: 1h
+#     secretStoreRef:
+#       name: cluster-secret-store
+#       kind: ClusterSecretStore
+#     target:
+#       name: github-webhook-secret
+#       creationPolicy: Owner
+#     data:
+#       - secretKey: secretToken
+#         remoteRef:
+#           key: tekton/github-webhook
+#           property: token
+#
+# OR generate manually (DO NOT commit real secrets):
+#   oc create secret generic github-webhook-secret \
+#     --from-literal=secretToken=$(openssl rand -hex 20) \
+#     -n openshift-pipelines
+#
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-webhook-secret
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: github-webhook-secret
+    app.kubernetes.io/part-of: openshift-aiops-platform
+  annotations:
+    description: "Webhook secret for GitHub/Gitea CI/CD triggers"
+type: Opaque
+stringData:
+  # ⚠️ PLACEHOLDER ONLY - Replace with real secret via oc create or External Secrets
+  secretToken: "GENERATE_WITH_openssl_rand_hex_20"
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tekton-triggers-sa
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: tekton-triggers-sa
+    app.kubernetes.io/part-of: openshift-aiops-platform
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tekton-triggers-role
+  labels:
+    app.kubernetes.io/name: tekton-triggers-role
+    app.kubernetes.io/part-of: openshift-aiops-platform
+rules:
+  # Tekton resources
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns", "taskruns", "pipelines", "tasks"]
+    verbs: ["create", "get", "list", "watch", "update", "patch"]
+
+  # Core resources
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "configmaps", "secrets", "services"]
+    verbs: ["get", "list", "watch", "create", "update"]
+
+  # Triggers resources
+  - apiGroups: ["triggers.tekton.dev"]
+    resources: ["eventlisteners", "triggerbindings", "triggertemplates", "triggers", "interceptors", "clusterinterceptors"]
+    verbs: ["get", "list", "watch"]
+
+  # ArgoCD resources (for sync status)
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tekton-triggers-binding
+  labels:
+    app.kubernetes.io/name: tekton-triggers-binding
+    app.kubernetes.io/part-of: openshift-aiops-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tekton-triggers-role
+subjects:
+  - kind: ServiceAccount
+    name: tekton-triggers-sa
+    namespace: openshift-pipelines
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-push-binding
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: github-push-binding
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  params:
+    - name: git-repo-url
+      value: $(body.repository.clone_url)
+    - name: git-revision
+      value: $(body.head_commit.id)
+    - name: git-repo-name
+      value: $(body.repository.name)
+    - name: git-branch
+      value: $(body.ref)
+    - name: namespace
+      value: "self-healing-platform"
+    - name: cluster-version
+      value: "4.18"
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: cicd-pipeline-template
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: cicd-pipeline-template
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  params:
+    - name: git-repo-url
+      description: Git repository URL
+    - name: git-revision
+      description: Git revision/commit SHA
+    - name: git-repo-name
+      description: Git repository name
+    - name: git-branch
+      description: Git branch reference
+    - name: namespace
+      description: Target namespace for validation
+    - name: cluster-version
+      description: Minimum required OpenShift version
+
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: cicd-validation-run-
+        namespace: openshift-pipelines
+        labels:
+          app.kubernetes.io/name: cicd-validation-run
+          app.kubernetes.io/part-of: openshift-aiops-platform
+          trigger: webhook
+          git-repo: $(tt.params.git-repo-name)
+          git-revision: $(tt.params.git-revision)
+      spec:
+        pipelineRef:
+          name: deployment-validation-pipeline
+        params:
+          - name: namespace
+            value: $(tt.params.namespace)
+          - name: cluster-version
+            value: $(tt.params.cluster-version)
+        serviceAccountName: tekton-triggers-sa
+        timeout: 30m
+        workspaces:
+          - name: shared-workspace
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: github-webhook-listener
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: github-webhook-listener
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  serviceAccountName: tekton-triggers-sa
+  triggers:
+    # GitHub push trigger
+    - name: github-push-trigger
+      interceptors:
+        - ref:
+            name: "github"
+          params:
+            - name: "secretRef"
+              value:
+                secretName: github-webhook-secret
+                secretKey: secretToken
+            - name: "eventTypes"
+              value: ["push"]
+            - name: "addChangedFiles"
+              value:
+                enabled: true
+                personalAccessToken:
+                  secretName: github-webhook-secret
+                  secretKey: secretToken
+        - ref:
+            name: "cel"
+          params:
+            - name: "filter"
+              value: "body.ref.startsWith('refs/heads/main')"
+            - name: "overlays"
+              value:
+                - key: branch_name
+                  expression: "body.ref.split('/')[2]"
+      bindings:
+        - ref: github-push-binding
+      template:
+        ref: cicd-pipeline-template
+
+    # Gitea push trigger (compatible with GitHub format)
+    - name: gitea-push-trigger
+      interceptors:
+        - ref:
+            name: "cel"
+          params:
+            - name: "filter"
+              value: "has(body.repository) && has(body.head_commit) && body.ref.startsWith('refs/heads/main')"
+            - name: "overlays"
+              value:
+                - key: branch_name
+                  expression: "body.ref.split('/')[2]"
+      bindings:
+        - ref: github-push-binding
+      template:
+        ref: cicd-pipeline-template
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: el-github-webhook-listener
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: el-github-webhook-listener
+    app.kubernetes.io/part-of: openshift-aiops-platform
+    eventlistener: github-webhook-listener
+spec:
+  selector:
+    eventlistener: github-webhook-listener
+  ports:
+    - name: http-listener
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: el-github-webhook-listener
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: el-github-webhook-listener
+    app.kubernetes.io/part-of: openshift-aiops-platform
+    eventlistener: github-webhook-listener
+spec:
+  to:
+    kind: Service
+    name: el-github-webhook-listener
+    weight: 100
+  port:
+    targetPort: http-listener
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

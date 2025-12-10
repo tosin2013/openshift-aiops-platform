@@ -1,0 +1,17 @@
+---
+# Variables for validated_patterns_notebooks role
+# These variables should not be overridden by users
+
+# Operator metadata
+notebooks_operator_name: "jupyter-validator"
+notebooks_controller_manager_name: "jupyter-validator-controller-manager"
+
+# CRD names
+notebooks_crd_name: "notebookvalidationjobs.mlops.mlops.dev"
+notebooks_crd_group: "mlops.mlops.dev"
+notebooks_crd_version: "v1alpha1"
+notebooks_crd_kind: "NotebookValidationJob"
+
+# Required Kubernetes API versions
+notebooks_required_k8s_version: "1.31"
+notebooks_required_openshift_version: "4.18"

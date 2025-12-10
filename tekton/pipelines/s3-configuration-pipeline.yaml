@@ -1,0 +1,115 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: s3-configuration-pipeline
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: s3-configuration-pipeline
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  description: |
+    Tekton pipeline for S3 configuration and model deployment.
+
+    This pipeline handles the critical Phase 2 workflow:
+    1. Validate S3 connectivity and credentials
+    2. Upload placeholder models to S3
+    3. Reconcile InferenceServices to trigger model download
+    4. Verify model serving is ready
+
+    Workflow:
+    ```
+    validate-s3-connectivity
+      ↓
+    upload-placeholder-models
+      ↓
+    reconcile-inferenceservices
+      ↓
+    validate-model-serving
+    ```
+
+    This pipeline is executed after:
+    - External Secrets Operator has synced S3 credentials
+    - ObjectBucketClaim has created the S3 bucket
+    - InferenceServices have been deployed (but models not yet available)
+
+    After this pipeline completes:
+    - S3 bucket is validated and accessible
+    - Placeholder models are available in S3
+    - InferenceServices are downloading models
+    - Model serving infrastructure is ready for user-trained models
+
+  params:
+    - name: namespace
+      type: string
+      default: self-healing-platform
+      description: Target namespace for S3 configuration
+    - name: secret-name
+      type: string
+      default: model-storage-config
+      description: Name of the secret containing S3 credentials
+    - name: model-bucket
+      type: string
+      default: model-storage
+      description: S3 bucket name for models
+    - name: timeout
+      type: string
+      default: "300"
+      description: Timeout in seconds for reconciliation
+
+  tasks:
+    # Task 1: Validate S3 connectivity
+    - name: validate-s3
+      taskRef:
+        name: validate-s3-connectivity
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: secret-name
+          value: $(params.secret-name)
+
+    # Task 2: Upload placeholder models (after S3 validation)
+    - name: upload-models
+      taskRef:
+        name: upload-placeholder-models
+      runAfter:
+        - validate-s3
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: secret-name
+          value: $(params.secret-name)
+        - name: model-bucket
+          value: $(params.model-bucket)
+
+    # Task 3: Reconcile InferenceServices (after models uploaded)
+    - name: reconcile-services
+      taskRef:
+        name: reconcile-inferenceservices
+      runAfter:
+        - upload-models
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: timeout
+          value: $(params.timeout)
+
+    # Task 4: Validate model serving (after reconciliation)
+    - name: validate-serving
+      taskRef:
+        name: validate-model-serving
+      runAfter:
+        - reconcile-services
+      params:
+        - name: namespace
+          value: $(params.namespace)
+
+  finally:
+    # Generate summary report
+    - name: generate-report
+      taskRef:
+        name: generate-validation-report
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: report-type
+          value: s3-configuration

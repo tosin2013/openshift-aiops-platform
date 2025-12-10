@@ -1,0 +1,195 @@
+{{- /*
+  Jupyter Notebook Validator Operator Deployment Template
+
+  This template supports two deployment methods:
+  1. OLM (operatorDeploymentMethod: "olm") - Recommended for production
+     - Operator installed via OperatorHub/OLM
+     - This template skips all operator resources (they're managed by OLM)
+     - Only NotebookValidationJob CRs are created by notebook-validation-jobs.yaml
+
+  2. Helm (operatorDeploymentMethod: "helm") - For development/testing
+     - Operator deployed by this Helm chart
+     - Includes Namespace, ServiceAccount, RBAC, cert-manager, and Deployment
+*/ -}}
+
+{{- if and .Values.notebooks .Values.notebooks.validation .Values.notebooks.validation.enabled (ne (.Values.notebooks.validation.operatorDeploymentMethod | default "olm") "olm") }}
+---
+# Namespace for Jupyter Notebook Validator Operator
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jupyter-notebook-validator-system
+  labels:
+    app.kubernetes.io/name: jupyter-notebook-validator
+    app.kubernetes.io/part-of: {{ .Values.global.pattern | default "self-healing-platform" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+
+---
+# ServiceAccount for the operator
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jupyter-notebook-validator-operator
+  namespace: jupyter-notebook-validator-system
+  labels:
+    app.kubernetes.io/name: jupyter-notebook-validator
+    app.kubernetes.io/component: operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+
+---
+# ClusterRole with finalizers permission
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jupyter-notebook-validator-operator
+  labels:
+    app.kubernetes.io/name: jupyter-notebook-validator
+    app.kubernetes.io/component: rbac
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec", "serviceaccounts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["mlops.mlops.dev"]
+  resources: ["notebookvalidationjobs", "notebookvalidationjobs/status", "notebookvalidationjobs/finalizers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jupyter-notebook-validator-operator
+  labels:
+    app.kubernetes.io/name: jupyter-notebook-validator
+    app.kubernetes.io/component: rbac
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jupyter-notebook-validator-operator
+subjects:
+- kind: ServiceAccount
+  name: jupyter-notebook-validator-operator
+  namespace: jupyter-notebook-validator-system
+
+---
+# cert-manager Issuer for webhook certificates
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+  namespace: jupyter-notebook-validator-system
+  labels:
+    app.kubernetes.io/name: jupyter-notebook-validator
+    app.kubernetes.io/component: certificates
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  selfSigned: {}
+
+---
+# Certificate for webhook server
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: jupyter-notebook-validator-webhook-cert
+  namespace: jupyter-notebook-validator-system
+  labels:
+    app.kubernetes.io/name: jupyter-notebook-validator
+    app.kubernetes.io/component: certificates
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  secretName: jupyter-notebook-validator-webhook-cert
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  subject:
+    organizations:
+    - jupyter-notebook-validator
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    encoding: PKCS1
+    size: 2048
+  usages:
+    - server auth
+    - client auth
+  dnsNames:
+  - jupyter-notebook-validator-webhook-service
+  - jupyter-notebook-validator-webhook-service.jupyter-notebook-validator-system
+  - jupyter-notebook-validator-webhook-service.jupyter-notebook-validator-system.svc
+  - jupyter-notebook-validator-webhook-service.jupyter-notebook-validator-system.svc.cluster.local
+  issuerRef:
+    name: selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+
+---
+# Operator Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyter-notebook-validator-operator
+  namespace: jupyter-notebook-validator-system
+  labels:
+    app: jupyter-notebook-validator-operator
+    app.kubernetes.io/name: jupyter-notebook-validator
+    app.kubernetes.io/component: operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jupyter-notebook-validator-operator
+  template:
+    metadata:
+      labels:
+        app: jupyter-notebook-validator-operator
+    spec:
+      serviceAccountName: jupyter-notebook-validator-operator
+      containers:
+      - name: operator
+        image: {{ .Values.notebooks.validation.operatorImage | default "quay.io/takinosh/jupyter-notebook-validator-operator:release-4.18-bdc4fc0" }}
+        imagePullPolicy: Always
+        env:
+        - name: WATCH_NAMESPACE
+          value: ""
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: OPERATOR_NAME
+          value: "jupyter-notebook-validator-operator"
+        resources:
+          requests:
+            memory: {{ .Values.notebooks.validation.operatorResources.requests.memory | default "128Mi" | quote }}
+            cpu: {{ .Values.notebooks.validation.operatorResources.requests.cpu | default "100m" | quote }}
+          limits:
+            memory: {{ .Values.notebooks.validation.operatorResources.limits.memory | default "512Mi" | quote }}
+            cpu: {{ .Values.notebooks.validation.operatorResources.limits.cpu | default "500m" | quote }}
+        volumeMounts:
+        - name: cert
+          mountPath: /tmp/k8s-webhook-server/serving-certs
+          readOnly: true
+      volumes:
+      - name: cert
+        secret:
+          secretName: jupyter-notebook-validator-webhook-cert
+          defaultMode: 420
+
+{{- end }}

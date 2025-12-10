@@ -1,0 +1,483 @@
+# Self-Healing Platform - Hub Cluster Helm Chart Values
+# This file contains default values for the hub cluster deployment
+
+# Main cluster configuration
+main:
+  # Namespace for deployment
+  namespace: self-healing-platform
+
+# Git configuration
+# IMPORTANT: Update values-global.yaml git.repoURL when changing clusters
+git:
+  # Git credentials
+  credentials:
+    username: user1
+    password: changeme
+
+# Global configuration
+global:
+  # Pattern name
+  pattern: self-healing-platform
+
+  # Chart version
+  version: "1.0.0"
+
+  # Namespace for deployment
+  namespace: self-healing-platform
+
+  # Image pull policy
+  imagePullPolicy: IfNotPresent
+
+  # Git configuration - SINGLE SOURCE OF TRUTH
+  # Update these values when deploying to a different cluster or pushing to GitHub
+  git:
+    # Git repository URL
+    # For Gitea: https://gitea-with-admin-gitea.apps.<cluster-domain>/<org>/<repo>.git
+    # For GitHub: https://github.com/<org>/<repo>.git
+    repoURL: ""  # Set via values-global.yaml or --set global.git.repoURL=...
+    # Git revision (branch, tag, commit)
+    revision: "main"
+
+# Image builds configuration
+imageBuilds:
+  # Enable image builds (BuildConfig and ImageStream)
+  enabled: true
+
+  # Git repository URL - uses global.git.repoURL if set
+  # Fallback value for when global is not available
+  gitRepository: ""  # Set via values-global.yaml global.git.repoURL
+
+  # Git reference (branch, tag, or commit) - uses global.git.revision if set
+  gitRef: ""  # Set via values-global.yaml global.git.revision
+
+  # Git credentials secret name
+  gitCredentialsSecret: git-credentials
+
+  # Base image for Docker builds
+  baseImage: registry.redhat.io/ubi8/python-39:latest
+
+  # Build resource limits
+  resources:
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+
+# Namespace configuration
+namespace:
+  # Create namespace
+  create: true
+
+  # Namespace name
+  name: self-healing-platform
+
+  # Namespace labels
+  labels:
+    name: self-healing-platform
+    app.kubernetes.io/component: namespace
+
+  # Namespace annotations
+  annotations:
+    openshift.io/description: "Self-Healing Platform namespace for AIOps automation"
+    openshift.io/display-name: "Self-Healing Platform"
+
+# RBAC configuration
+rbac:
+  # Create RBAC resources
+  create: true
+
+  # Service account name
+  serviceAccountName: self-healing-operator
+
+  # Role name
+  roleName: self-healing-operator
+
+  # Role binding name
+  roleBindingName: self-healing-operator
+
+  # Cluster-scoped RBAC resources (ClusterRole, ClusterRoleBinding)
+  # ⚠️ DISABLED by default for Hybrid Management Model (ADR-030)
+  # These resources are deployed via Ansible prereqs, NOT via ArgoCD
+  # Reason: Namespaced ArgoCD cannot manage cluster-scoped resources
+  clusterScoped:
+    enabled: false
+
+  # Cross-namespace RBAC (Role/RoleBinding in openshift-monitoring, default, etc.)
+  # ⚠️ DISABLED by default for Hybrid Management Model (ADR-030)
+  # These resources are deployed via Ansible prereqs, NOT via ArgoCD
+  # Reason: Namespaced ArgoCD cannot manage resources in cluster-managed namespaces
+  crossNamespaceEnabled: false
+
+# Storage configuration
+storage:
+  # Self-healing data storage
+  selfHealingData:
+    size: "10Gi"
+    storageClass: "gp3-csi"  # RWO - works with EBS, ODF, most providers
+
+  # Model artifacts storage
+  # IMPORTANT: This requires ReadWriteMany (RWX) access mode
+  # Default: gp3-csi (RWO fallback - limits to single pod access)
+  # For multi-pod access: Set to "ocs-storagecluster-cephfs" if ODF is installed
+  # Or use provider-specific RWX storage class (Azure Files, GCP Filestore, NFS, etc.)
+  modelArtifacts:
+    size: "50Gi"
+    storageClass: "gp3-csi"  # ⚠️ RWO only - change to RWX class if available
+
+  # Workbench data storage
+  workbenchData:
+    size: "20Gi"
+    storageClass: "gp3-csi"  # RWO - works with EBS, ODF, most providers
+
+# Node configuration for GPU and storage support
+nodeConfig:
+  # GPU node support
+  gpu:
+    enabled: true
+    # Toleration for GPU nodes with nvidia.com/gpu=True:NoSchedule taint
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: "True"
+        effect: NoSchedule
+
+  # Storage node support (for CSI plugins)
+  storage:
+    enabled: true
+    # Toleration for storage nodes with node.ocs.openshift.io/storage=true:NoSchedule taint
+    tolerations:
+      - key: node.ocs.openshift.io/storage
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+
+# Coordination Engine configuration
+coordinationEngine:
+  # Enable coordination engine
+  enabled: true
+
+  # Deployment name
+  name: coordination-engine
+
+  # Replica count
+  replicas: 1
+
+  # Image configuration
+  image:
+    repository: registry.redhat.io/ubi8/python-39
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # Resource requests and limits
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+  # Port configuration
+  port: 8080
+
+  # Environment variables
+  env:
+    LOG_LEVEL: INFO
+    METRICS_PORT: "8090"
+    COORDINATION_ENGINE_PORT: "8080"
+    MODEL_SERVING_TIMEOUT: "30s"
+
+# Object Store configuration (OpenShift Data Foundation / NooBaa)
+objectStore:
+  # Enable object store integration
+  enabled: true
+
+  # S3 endpoint URL (auto-detected from NooBaa route if empty)
+  # For ODF/NooBaa: https://s3.openshift-storage.svc.cluster.local
+  # Leave empty to auto-detect from route
+  endpoint: ""
+
+  # S3 access key (from ObjectBucketClaim secret)
+  # Will be populated from values-secret.yaml
+  accessKey: ""
+
+  # S3 secret key (from ObjectBucketClaim secret)
+  # Will be populated from values-secret.yaml
+  secretKey: ""
+
+  # S3 bucket names
+  buckets:
+    models: "model-storage"
+    trainingData: "training-data"
+    inferenceResults: "inference-results"
+
+  # S3 region
+  region: "us-east-1"
+
+  # SSL verification (false for self-signed certs in dev)
+  sslVerify: false
+
+  # Auto-detect S3 endpoint from NooBaa route
+  autoDetectEndpoint: true
+
+# Model Serving configuration
+modelServing:
+  # Enable model serving
+  enabled: true
+
+  # sklearn runtime configuration
+  sklearn:
+    image: kserve/sklearnserver:latest
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+  # tensorflow runtime configuration
+  tensorflow:
+    image: kserve/tfserving:latest
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "200m"
+      limits:
+        memory: "1Gi"
+        cpu: "1000m"
+
+  # Models to deploy
+  models:
+    - name: anomaly-detector
+      framework: sklearn
+      storageUri: "s3://model-storage/anomaly-detector/"
+      replicas: 1
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 2
+          memory: 4Gi
+
+    - name: predictive-analytics
+      framework: tensorflow
+      storageUri: "s3://model-storage/predictive-analytics/"
+      replicas: 1
+      resources:
+        requests:
+          cpu: 1
+          memory: 2Gi
+        limits:
+          cpu: 2
+          memory: 4Gi
+
+# AI/ML Workbench configuration
+workbench:
+  # Enable workbench
+  enabled: true
+
+  # Notebook name
+  name: self-healing-workbench
+
+  # Image configuration
+  image:
+    repository: quay.io/opendatahub/workbench-images
+    tag: jupyter-datascience-c9s-py311_2023c_latest
+    pullPolicy: IfNotPresent
+
+  # Resource requests and limits
+  resources:
+    requests:
+      cpu: 1
+      memory: 4Gi
+    limits:
+      cpu: 4
+      memory: 8Gi
+
+  # GPU configuration
+  # Disabled by default to allow scheduling on ODF storage nodes (with CephFS CSI driver)
+  # GPU nodes may not have CephFS driver required for RWX model storage
+  # For GPU workloads, use dedicated training Jobs scheduled on GPU nodes
+  gpu:
+    enabled: false
+    nodeSelector:
+      nvidia.com/gpu.present: "true"
+
+# Monitoring configuration
+monitoring:
+  # Enable monitoring
+  enabled: true
+
+  # Prometheus configuration
+  prometheus:
+    enabled: true
+    scrapeInterval: 30s
+    retentionDays: 30
+
+  # Grafana configuration
+  grafana:
+    enabled: true
+    adminPassword: ""  # Will be set from secrets
+
+  # Service monitors
+  serviceMonitors:
+    - coordination-engine
+    - mcp-server
+    - self-healing-platform
+
+# BuildConfig configuration
+buildConfig:
+  # Enable BuildConfig
+  enabled: true
+
+  # Git repository configuration
+  git:
+    uri: ""  # Will be set from values-secret.yaml
+    ref: main
+
+  # Build triggers
+  triggers:
+    - type: ConfigChange
+    - type: Generic
+
+# Security configuration
+security:
+  # Enable RBAC
+  rbac: true
+
+  # Pod security policies
+  podSecurityPolicies: true
+
+  # Network policies
+  networkPolicies: true
+
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+
+# Networking configuration
+networking:
+  # Service type
+  serviceType: ClusterIP
+
+  # Ingress configuration
+  ingress:
+    enabled: false
+    className: openshift
+    annotations: {}
+    hosts: []
+    tls: []
+
+# MCP Server Configuration
+mcpServer:
+  enabled: true
+  serviceAccount:
+    create: false  # Use existing self-healing-operator ServiceAccount
+    name: self-healing-operator
+
+# Feature flags
+features:
+  # Enable experimental features
+  experimental: false
+
+  # Enable beta features
+  beta: false
+
+  # Enable AI/ML features
+  aiml: true
+
+  # Enable edge deployment
+  edge: false
+
+# Notebook Validation configuration
+# Used by Jupyter Notebook Validator Operator
+notebookValidation:
+  # Enable notebook validation
+  enabled: true
+
+  # Repository authentication
+  # Set to false for public repositories (recommended with gitleaks enforcement)
+  # Set to true for private repositories (requires sourceSecretName)
+  requiresAuth: false
+
+  # Git repository for test notebooks
+  # Can be GitHub, Gitea, or any Git server
+  repository:
+    # Repository URL for notebook validation tests
+    # For Gitea: https://gitea-with-admin-gitea.apps.<cluster>/org/repo.git
+    # For GitHub: https://github.com/org/repo
+    repoURL: "https://gitea-with-admin-gitea.apps.cluster-pvbs6.pvbs6.sandbox3005.opentlc.com/takinosh/openshift-aiops-platform.git"
+    # Branch or tag to use
+    ref: "main"
+    # Context directory for notebooks (optional)
+    contextDir: "notebooks"
+
+  # GitHub/Git credentials (ONLY if requiresAuth: true)
+  github:
+    # Name of the source secret containing Git credentials
+    # This secret must exist and contain 'username' and 'password'/'token' keys
+    sourceSecretName: "github-pat-credentials-source"
+
+# Secrets management configuration
+secrets:
+  # Secret backend: vault, sealed-secrets, or external-secrets
+  backend: external-secrets
+
+  # Enable ClusterSecretStore for cross-namespace secret access
+  # Set to true if you need to share secrets across multiple namespaces
+  clusterScoped: false
+
+  # Central namespace for shared secrets (when clusterScoped is true)
+  # Defaults to main.namespace if not specified
+  centralNamespace: ""
+
+  # External Secrets Operator configuration
+  externalSecrets:
+    # Enable External Secrets Operator
+    enabled: true
+
+    # Service account for ESO
+    serviceAccount:
+      name: external-secrets-sa
+
+    # SecretStore configuration
+    secretStore:
+      name: kubernetes-secret-store
+      kind: SecretStore
+
+    # CA Provider configuration for secure Kubernetes API communication
+    caProvider:
+      enabled: true
+      type: ConfigMap
+      name: kube-root-ca.crt
+      key: ca.crt
+
+    # Refresh interval for syncing secrets
+    refreshInterval: 1h
+
+# Metadata
+metadata:
+  # Owner/team
+  owner: "platform-team"
+
+  # Environment
+  environment: "development"
+
+  # Cost center
+  costCenter: ""
+
+  # Labels
+  labels:
+    app.kubernetes.io/name: self-healing-platform
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: helm
+
+  # Annotations
+  annotations:
+    description: "Self-Healing Platform for OpenShift AIOps"

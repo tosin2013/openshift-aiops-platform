@@ -1,0 +1,186 @@
+---
+# Deploy cluster-scoped RBAC resources (ClusterRole, ClusterRoleBinding)
+# These are cluster-scoped resources that namespaced ArgoCD cannot manage
+# Deployed via Ansible before ArgoCD syncs (Hybrid Management Model - ADR-030)
+
+- name: Display cluster RBAC deployment message
+  debug:
+    msg: "Deploying cluster-scoped RBAC resources (ClusterRole, ClusterRoleBinding)"
+
+# ==============================================================================
+# Self-Healing Operator ClusterRole
+# ==============================================================================
+
+- name: Deploy Self-Healing Operator ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: self-healing-operator-cluster
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      rules:
+        # Cluster-scoped resources
+        - apiGroups: [""]
+          resources: ["namespaces", "nodes", "persistentvolumes"]
+          verbs: ["get", "list", "watch"]
+        # CRDs (cluster-scoped)
+        - apiGroups: ["apiextensions.k8s.io"]
+          resources: ["customresourcedefinitions"]
+          verbs: ["get", "list", "watch"]
+        # Storage classes
+        - apiGroups: ["storage.k8s.io"]
+          resources: ["storageclasses"]
+          verbs: ["get", "list", "watch"]
+  when: deploy_cluster_rbac | default(true) | bool
+
+# ==============================================================================
+# Self-Healing Workbench ClusterRole
+# ==============================================================================
+
+- name: Deploy Self-Healing Workbench ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: self-healing-workbench-cluster
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      rules:
+        # Cluster-scoped resources for data collection
+        - apiGroups: [""]
+          resources: ["namespaces", "nodes"]
+          verbs: ["get", "list", "watch"]
+        # Persistent volumes (cluster-scoped)
+        - apiGroups: [""]
+          resources: ["persistentvolumes"]
+          verbs: ["get", "list", "watch"]
+        # Storage classes (cluster-scoped)
+        - apiGroups: ["storage.k8s.io"]
+          resources: ["storageclasses"]
+          verbs: ["get", "list", "watch"]
+  when: deploy_cluster_rbac | default(true) | bool
+
+- name: Deploy Self-Healing Workbench ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: self-healing-workbench-cluster
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      subjects:
+        - kind: ServiceAccount
+          name: self-healing-workbench
+          namespace: "{{ pattern_namespace }}"
+      roleRef:
+        kind: ClusterRole
+        name: self-healing-workbench-cluster
+        apiGroup: rbac.authorization.k8s.io
+  when: deploy_cluster_rbac | default(true) | bool
+
+# ==============================================================================
+# Prometheus Monitoring ClusterRoleBinding
+# ==============================================================================
+
+- name: Deploy Self-Healing Workbench Prometheus ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: self-healing-workbench-prometheus
+        labels:
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      subjects:
+        - kind: ServiceAccount
+          name: self-healing-workbench
+          namespace: "{{ pattern_namespace }}"
+      roleRef:
+        kind: ClusterRole
+        name: cluster-monitoring-view
+        apiGroup: rbac.authorization.k8s.io
+  when: deploy_cluster_rbac | default(true) | bool
+
+# ==============================================================================
+# External Secrets Operator RBAC (if ESO is deployed)
+# ==============================================================================
+
+- name: Deploy External Secrets ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: "external-secrets-{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/name: external-secrets
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/managed-by: ansible
+      rules:
+        - apiGroups: [""]
+          resources: ["secrets"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          verbs: ["get", "list", "watch"]
+  when:
+    - deploy_cluster_rbac | default(true) | bool
+    - deploy_eso_rbac | default(true) | bool
+
+- name: Deploy External Secrets ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "external-secrets-{{ pattern_namespace }}"
+        labels:
+          app.kubernetes.io/name: external-secrets
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/managed-by: ansible
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: "external-secrets-{{ pattern_namespace }}"
+      subjects:
+        - kind: ServiceAccount
+          name: "{{ eso_service_account | default('external-secrets') }}"
+          namespace: "{{ pattern_namespace }}"
+  when:
+    - deploy_cluster_rbac | default(true) | bool
+    - deploy_eso_rbac | default(true) | bool
+
+- name: Display cluster RBAC deployment status
+  debug:
+    msg: |
+      ✅ Cluster-scoped RBAC resources deployed:
+      - ClusterRole: self-healing-operator-cluster
+      - ClusterRole: self-healing-workbench-cluster
+      - ClusterRoleBinding: self-healing-workbench-cluster
+      - ClusterRoleBinding: self-healing-workbench-prometheus
+      - ClusterRole: external-secrets-{{ pattern_namespace }} (if ESO enabled)
+      - ClusterRoleBinding: external-secrets-{{ pattern_namespace }} (if ESO enabled)
+
+      These allow:
+      - Operator: Access to cluster-scoped resources (namespaces, nodes, CRDs)
+      - Workbench: Access to cluster-scoped resources for monitoring
+      - Workbench: Access to Prometheus metrics via cluster-monitoring-view role
+      - External Secrets: Access to secrets and configmaps cluster-wide

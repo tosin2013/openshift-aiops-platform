@@ -1,0 +1,28 @@
+---
+# Install rhvp.cluster_utils Ansible collection
+
+- name: Check if rhvp.cluster_utils collection is already installed
+  ansible.builtin.command:
+    cmd: ansible-galaxy collection list rhvp.cluster_utils
+  register: collection_check
+  changed_when: false
+  failed_when: false
+
+- name: Install rhvp.cluster_utils collection
+  ansible.builtin.command:
+    cmd: ansible-galaxy collection install rhvp.cluster_utils:>={{ validated_patterns_rhvp_collection_version }}
+  register: collection_install
+  changed_when: "'was installed successfully' in collection_install.stdout"
+  failed_when: false
+  when: collection_check.rc != 0
+
+- name: Display collection installation status
+  debug:
+    msg: |
+      {% if collection_check.rc == 0 %}
+      ✅ rhvp.cluster_utils collection already installed
+      {% elif collection_install is defined and collection_install.rc == 0 %}
+      ✅ rhvp.cluster_utils collection installed successfully
+      {% else %}
+      ⚠️  rhvp.cluster_utils collection not available (skipping - may be internal/restricted)
+      {% endif %}

@@ -1,0 +1,18 @@
+---
+# Handlers for validated_patterns_notebooks role
+
+- name: Restart operator
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: jupyter-validator-controller-manager
+        namespace: "{{ notebooks_operator_namespace }}"
+      spec:
+        template:
+          metadata:
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "{{ ansible_date_time.iso8601 }}"
+  listen: "restart jupyter operator"

@@ -1,0 +1,19 @@
+---
+# Defaults for validated_patterns_prerequisites role
+
+# Minimum OpenShift version
+validated_patterns_min_openshift_version: "4.12"
+
+# Minimum cluster resources
+validated_patterns_min_nodes: 3
+validated_patterns_min_cpu: 8  # in cores
+validated_patterns_min_memory: 16  # in GB
+
+# Required operators
+validated_patterns_required_operators:
+  - openshift-gitops-operator
+
+# Optional operators
+validated_patterns_optional_operators:
+  - openshift-pipelines-operator
+  - advanced-cluster-management

@@ -1,0 +1,79 @@
+---
+# Validate Validated Patterns Operator deployment
+
+- name: Validate operator is installed
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ vp_operator_namespace }}"
+  register: operator_validation
+  failed_when: operator_validation.resources | selectattr('metadata.name', 'search', vp_operator_name) | list | length == 0
+
+- name: Validate Pattern CR exists
+  kubernetes.core.k8s_info:
+    api_version: gitops.hybrid-cloud-patterns.io/v1alpha1
+    kind: Pattern
+    name: "{{ validated_patterns_pattern_name }}"
+    namespace: "{{ vp_operator_namespace }}"
+  register: pattern_validation
+  failed_when: pattern_validation.resources | length == 0
+  when: vp_validate_deployment | bool
+
+- name: Validate GitOps namespace exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ validated_patterns_target_namespace }}"
+  register: gitops_ns_validation
+  failed_when: gitops_ns_validation.resources | length == 0
+  when: vp_validate_gitops | bool
+
+- name: Validate ArgoCD instance exists
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    name: openshift-gitops
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: argocd_validation
+  failed_when: argocd_validation.resources | length == 0
+  when: vp_validate_gitops | bool
+
+- name: Validate clustergroup application exists
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ validated_patterns_pattern_name }}-clustergroup"
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: clustergroup_validation
+  failed_when: clustergroup_validation.resources | length == 0
+  when: vp_validate_clustergroup | bool
+  ignore_errors: yes
+
+- name: Get all ArgoCD applications
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    namespace: "{{ validated_patterns_target_namespace }}"
+  register: all_applications
+
+- name: Display validation summary
+  debug:
+    msg: |
+      ========================================
+      Validation Summary
+      ========================================
+      ✅ Validated Patterns Operator: Installed
+      ✅ Pattern CR: Created ({{ validated_patterns_pattern_name }})
+      ✅ GitOps Namespace: {{ validated_patterns_target_namespace }}
+      ✅ ArgoCD Instance: Deployed
+      {% if clustergroup_validation.resources | length > 0 %}
+      ✅ Clustergroup Application: Created
+      {% else %}
+      ⏳ Clustergroup Application: Pending
+      {% endif %}
+
+      ArgoCD Applications: {{ all_applications.resources | length }}
+      {% for app in all_applications.resources %}
+      - {{ app.metadata.name }}: {{ app.status.health.status | default('Unknown') }} / {{ app.status.sync.status | default('Unknown') }}
+      {% endfor %}
+      ========================================

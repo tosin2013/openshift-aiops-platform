@@ -1,0 +1,17 @@
+---
+# Jupyter Notebook Validator Operator Subscription
+# This installs the operator from custom Quay.io catalog
+# Bypasses OperatorHub.io to install v1.0.4-ocp4.20 directly
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: jupyter-notebook-validator-operator
+  namespace: openshift-operators
+spec:
+  channel: alpha
+  name: jupyter-notebook-validator-operator
+  source: jupyter-validator-custom-catalog
+  sourceNamespace: openshift-marketplace
+  # Pin to specific version for controlled upgrade
+  startingCSV: jupyter-notebook-validator-operator.v1.0.4-ocp4.20
+  installPlanApproval: Automatic

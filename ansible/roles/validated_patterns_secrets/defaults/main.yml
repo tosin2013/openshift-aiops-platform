@@ -1,0 +1,12 @@
+---
+# Defaults for validated_patterns_secrets role
+
+# Secrets configuration
+validated_patterns_secrets_namespace: "validated-patterns-secrets"
+
+# Sealed secrets
+validated_patterns_sealed_secrets_enabled: false
+
+# Vault integration (optional)
+validated_patterns_vault_enabled: false
+validated_patterns_vault_addr: "https://vault.example.com"

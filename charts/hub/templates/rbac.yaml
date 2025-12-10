@@ -1,0 +1,346 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: self-healing-operator
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+  annotations:
+    # Sync wave - must be created before noobaa-credentials-init job (wave -5)
+    argocd.argoproj.io/sync-wave: "-6"
+rules:
+# Core API resources
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets", "events"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Namespace and node access (required for health checks and cluster discovery)
+- apiGroups: [""]
+  resources: ["namespaces", "nodes", "endpoints"]
+  verbs: ["get", "list", "watch"]
+# Storage resources
+- apiGroups: [""]
+  resources: ["persistentvolumes", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+# Leases for leader election
+- apiGroups: [""]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Apps API resources
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Batch API resources (jobs and cronjobs)
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Autoscaling resources
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch"]
+# Policy resources
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch"]
+# Networking resources
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch"]
+# Storage classes
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch"]
+# Monitoring resources
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "prometheusrules"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# KServe resources
+- apiGroups: ["serving.kserve.io"]
+  resources: ["inferenceservices"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Kubeflow resources
+- apiGroups: ["kubeflow.org"]
+  resources: ["notebooks"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Machine configuration resources
+- apiGroups: ["machineconfiguration.openshift.io"]
+  resources: ["machineconfigs", "machineconfigpools"]
+  verbs: ["get", "list", "watch"]
+# OpenShift image resources (needed for wait-for-image job)
+- apiGroups: ["image.openshift.io"]
+  resources: ["imagestreams", "imagestreamtags"]
+  verbs: ["get", "list", "watch"]
+# OpenShift build resources (needed for wait-for-image job)
+- apiGroups: ["build.openshift.io"]
+  resources: ["builds"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: self-healing-operator
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+  annotations:
+    # Sync wave - must be created before noobaa-credentials-init job (wave -5)
+    argocd.argoproj.io/sync-wave: "-6"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: self-healing-operator
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+  annotations:
+    # Sync wave - must be created before noobaa-credentials-init job (wave -5)
+    argocd.argoproj.io/sync-wave: "-6"
+subjects:
+- kind: ServiceAccount
+  name: self-healing-operator
+  namespace: self-healing-platform
+roleRef:
+  kind: Role
+  name: self-healing-operator
+  apiGroup: rbac.authorization.k8s.io
+{{- if .Values.rbac.clusterScoped.enabled }}
+---
+# ClusterRole for cluster-scoped resources (namespaces, nodes, etc.)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: self-healing-operator-cluster
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+rules:
+# Cluster-scoped resources
+- apiGroups: [""]
+  resources: ["namespaces", "nodes"]
+  verbs: ["get", "list", "watch"]
+# Persistent volumes (cluster-scoped)
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["get", "list", "watch"]
+# Storage classes (cluster-scoped)
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch"]
+{{- end }}
+{{- /*
+ClusterRoleBinding commented out - ArgoCD in namespaced mode cannot manage cluster-scoped resources
+Apply manually if needed:
+  oc apply -f charts/hub/manifests/clusterrolebinding.yaml
+*/ -}}
+{{- /* Only add separator if cluster-scoped RBAC was NOT rendered */ -}}
+{{- if not .Values.rbac.clusterScoped.enabled }}
+---
+{{- end }}
+# Role for RHODS workbench to access cluster resources for data collection
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: self-healing-workbench
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+rules:
+# Core API resources for data collection
+- apiGroups: [""]
+  resources: ["pods", "services", "events", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+# Pod logs (required for log collection)
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+# Namespace access
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+# Apps API resources
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+# Batch API resources
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch"]
+# Monitoring resources
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "prometheusrules"]
+  verbs: ["get", "list", "watch"]
+# KServe resources
+- apiGroups: ["serving.kserve.io"]
+  resources: ["inferenceservices"]
+  verbs: ["get", "list", "watch"]
+# Kubeflow resources
+- apiGroups: ["kubeflow.org"]
+  resources: ["notebooks"]
+  verbs: ["get", "list", "watch"]
+---
+# RoleBinding for RHODS workbench
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: self-healing-workbench
+  namespace: self-healing-platform
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+subjects:
+- kind: ServiceAccount
+  name: self-healing-workbench
+  namespace: self-healing-platform
+roleRef:
+  kind: Role
+  name: self-healing-workbench
+  apiGroup: rbac.authorization.k8s.io
+{{- if .Values.rbac.crossNamespaceEnabled }}
+---
+# ⚠️ CROSS-NAMESPACE RBAC - Managed by Ansible (Hybrid Management Model)
+#
+# These Role/RoleBindings are in cluster-managed namespaces (openshift-monitoring, default)
+# Namespaced ArgoCD CANNOT manage resources in arbitrary namespaces
+#
+# DEPLOYMENT METHOD: Ansible role validated_patterns_deploy_cluster_resources
+# Location: ansible/roles/validated_patterns_deploy_cluster_resources/tasks/deploy_cross_namespace_rbac.yml
+#
+# This section is disabled by default (rbac.crossNamespaceEnabled: false)
+# Only enable if using cluster-admin ArgoCD or manual deployment
+#
+# ADR-030: Hybrid Management Model for Namespaced ArgoCD
+
+# Role for workbench to access openshift-monitoring namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: self-healing-workbench-monitoring
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+rules:
+# Core API resources for data collection
+- apiGroups: [""]
+  resources: ["pods", "services", "events"]
+  verbs: ["get", "list", "watch"]
+# Pod logs
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+---
+# RoleBinding for openshift-monitoring namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: self-healing-workbench-monitoring
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+subjects:
+- kind: ServiceAccount
+  name: self-healing-workbench
+  namespace: self-healing-platform
+roleRef:
+  kind: Role
+  name: self-healing-workbench-monitoring
+  apiGroup: rbac.authorization.k8s.io
+---
+# Role for workbench to access default namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: self-healing-workbench-default
+  namespace: default
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+rules:
+# Core API resources for data collection
+- apiGroups: [""]
+  resources: ["pods", "services", "events"]
+  verbs: ["get", "list", "watch"]
+# Pod logs
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+---
+# RoleBinding for default namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: self-healing-workbench-default
+  namespace: default
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+subjects:
+- kind: ServiceAccount
+  name: self-healing-workbench
+  namespace: self-healing-platform
+roleRef:
+  kind: Role
+  name: self-healing-workbench-default
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- if .Values.rbac.clusterScoped.enabled }}
+---
+# ClusterRole for workbench to access cluster-scoped resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: self-healing-workbench-cluster
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+rules:
+# Cluster-scoped resources for data collection
+- apiGroups: [""]
+  resources: ["namespaces", "nodes"]
+  verbs: ["get", "list", "watch"]
+# Persistent volumes (cluster-scoped)
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["get", "list", "watch"]
+# Storage classes (cluster-scoped)
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch"]
+---
+# ClusterRoleBinding for workbench cluster-scoped resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: self-healing-workbench-cluster
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+subjects:
+- kind: ServiceAccount
+  name: self-healing-workbench
+  namespace: self-healing-platform
+roleRef:
+  kind: ClusterRole
+  name: self-healing-workbench-cluster
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRoleBinding for workbench to access Prometheus metrics
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: self-healing-workbench-prometheus
+  labels:
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/name: self-healing-platform
+subjects:
+- kind: ServiceAccount
+  name: self-healing-workbench
+  namespace: self-healing-platform
+roleRef:
+  kind: ClusterRole
+  name: cluster-monitoring-view
+  apiGroup: rbac.authorization.k8s.io
+
+{{- end }}

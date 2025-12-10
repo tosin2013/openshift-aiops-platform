@@ -1,0 +1,411 @@
+---
+# Playbook: Complete Pattern Deployment for Self-Healing Platform
+# Purpose: Deploy complete pattern using all Ansible roles in proper sequence
+# Framework: Validated Patterns (AGENTS.md guidelines)
+# Based on: Implementation Plan Phase 4, ADR-019, ADR-020
+# Usage:
+#   - Via Makefile: make end2end-deployment
+#   - Direct: ansible-navigator run ansible/playbooks/deploy_complete_pattern.yml
+#   - With extras: ansible-navigator run ansible/playbooks/deploy_complete_pattern.yml -e "debug_mode=true"
+
+- name: Deploy Complete Self-Healing Platform Pattern
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    # Pattern configuration
+    pattern_name: "self-healing-platform"
+    pattern_namespace: "self-healing-platform"
+    pattern_repo_url: >-
+      {{ lookup('env', 'PATTERN_REPO_URL') |
+         default('https://github.com/tosin2013/openshift-aiops-platform.git', true) }}
+    pattern_git_branch: "{{ lookup('env', 'PATTERN_GIT_BRANCH') | default('main', true) }}"
+
+    # Helm configuration
+    helm_chart_path: "charts/hub"
+    values_global_path: "values-global.yaml"
+    values_hub_path: "values-hub.yaml"
+
+    # Deployment configuration
+    deploy_timeout: 1200        # 20 minutes
+    wait_for_ready: true
+
+    # Debug mode
+    debug_mode: "{{ lookup('env', 'DEBUG_MODE') | default('false', true) | bool }}"
+
+    # Component enablement (can be overridden)
+    enable_operator: false      # Set to true to use VP Operator (end-user workflow)
+    enable_gitea: false         # Set to true if using local Gitea
+    enable_secrets_mgmt: true   # External Secrets Operator
+    enable_validation: true     # Post-deployment validation
+
+  pre_tasks:
+    - name: Display deployment configuration
+      debug:
+        msg: |
+          ========================================
+          Self-Healing Platform Deployment
+          ========================================
+          Pattern: {{ pattern_name }}
+          Namespace: {{ pattern_namespace }}
+          Repository: {{ pattern_repo_url }}
+          Branch: {{ pattern_git_branch }}
+
+          Deployment Options:
+          - Gitea Integration: {{ enable_gitea }}
+          - Secrets Management: {{ enable_secrets_mgmt }}
+          - Post-Deployment Validation: {{ enable_validation }}
+          - Debug Mode: {{ debug_mode }}
+
+          Deployment Sequence (per AGENTS.md):
+          1. Prerequisites Validation
+          2. Common Infrastructure (Helm, ArgoCD, ESO)
+          3. Secrets Management Configuration
+          4. Cluster-Scoped Resources Deployment (Hybrid Management Model)
+          5. Pattern Deployment (Namespaced Resources via ArgoCD)
+          6. Post-Deployment Validation
+          ========================================
+      when: debug_mode
+
+    - name: Verify cluster connectivity
+      block:
+        - name: Check cluster connectivity using kubernetes.core
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Namespace
+            name: default
+          register: cluster_check
+          failed_when: false
+
+        - name: Fail if not connected to cluster
+          fail:
+            msg: "Not connected to OpenShift cluster. Please ensure KUBECONFIG is set correctly."
+          when: cluster_check is failed or cluster_check.resources is not defined
+
+        - name: Display cluster info
+          debug:
+            msg: "✓ Connected to cluster successfully"
+          when: debug_mode
+
+  roles:
+    # ========================================
+    # Step 0: Install Validated Patterns Operator (Optional - for end-user workflow)
+    # ========================================
+    # NOTE: For development workflow, skip this step and use direct deployment roles
+    # Set enable_operator: false to skip operator installation
+    - name: Install Validated Patterns Operator
+      role: validated_patterns_operator
+      when: enable_operator | default(false) | bool
+      tags: ['operator', 'install']
+      vars:
+        validated_patterns_pattern_name: "{{ pattern_name }}"
+        validated_patterns_git_url: "{{ pattern_repo_url }}"
+        validated_patterns_git_revision: "{{ pattern_git_branch }}"
+        validated_patterns_target_namespace: "openshift-gitops"
+        validated_patterns_values_global: "{{ values_global_path }}"
+        validated_patterns_values_hub: "{{ values_hub_path }}"
+        vp_debug_mode: "{{ debug_mode }}"
+
+    # ========================================
+    # Step 1: Prerequisites Validation
+    # ========================================
+    - name: Validate cluster prerequisites
+      role: validated_patterns_prerequisites
+      tags: ['prerequisites', 'validation']
+      vars:
+        # Pass through pattern-specific vars
+        prerequisites_namespace: "{{ pattern_namespace }}"
+        prerequisites_pattern_name: "{{ pattern_name }}"
+
+    # ========================================
+    # Step 2: Common Infrastructure
+    # ========================================
+    - name: Deploy common infrastructure
+      role: validated_patterns_common
+      tags: ['common', 'infrastructure']
+      vars:
+        # Helm and GitOps configuration
+        common_namespace: "{{ pattern_namespace }}"
+        common_pattern_name: "{{ pattern_name }}"
+
+        # Workflow configuration (skip operator-specific waits in development mode)
+        validated_patterns_use_operator: "{{ enable_operator }}"
+
+        # External Secrets Operator deployment (ADR-026)
+        deploy_external_secrets_operator: "{{ enable_secrets_mgmt }}"
+        eso_namespace: "external-secrets-operator"
+        eso_channel: "alpha"
+
+    # ========================================
+    # Step 3: Gitea (Optional)
+    # ========================================
+    - name: Deploy Gitea for local development
+      role: validated_patterns_gitea
+      when: enable_gitea
+      tags: ['gitea', 'optional']
+      vars:
+        gitea_namespace: "gitea"
+        gitea_instance_name: "gitea-with-admin"
+
+    # ========================================
+    # Step 4: Secrets Management
+    # ========================================
+    - name: Configure secrets management
+      role: validated_patterns_secrets
+      when: enable_secrets_mgmt
+      tags: ['secrets', 'security']
+      vars:
+        secrets_namespace: "{{ pattern_namespace }}"
+        secrets_backend: "kubernetes"  # Can be overridden to vault, aws, azure, gcp
+        # External Secrets Operator is already deployed by validated_patterns_common
+
+    # ========================================
+    # Step 4.5: Configure Notebook Validation (ADR-029)
+    # ========================================
+    # Setup notebook validation prerequisites:
+    # - GitHub PAT secret for git repository access
+    # - Jupyter Notebook Validator Operator deployment via Kustomize
+    # - SecretStore and ExternalSecrets configuration
+    - name: Deploy Jupyter Notebook Validator Operator via Kustomize
+      role: validated_patterns_jupyter_validator
+      tags: ['notebooks', 'validation', 'jupyter-validator']
+      vars:
+        jupyter_validator_operator_enabled: true
+        jupyter_validator_openshift_version: "4.18"
+        jupyter_validator_operator_namespace: "jupyter-notebook-validator-operator"
+        jupyter_validator_validation_namespace: "{{ pattern_namespace }}"
+
+    # ========================================
+    # Step 4.6: Deploy Cluster-Scoped Resources (Hybrid Management Model)
+    # ========================================
+    # CRITICAL: Deploy cluster-scoped resources BEFORE ArgoCD Application creation
+    # This supports Pattern 3: Hybrid Management Model for namespaced ArgoCD deployments
+    # - Cluster-scoped resources: Deployed via Ansible (this step)
+    # - Namespaced resources: Deployed via ArgoCD (Step 5)
+    # Reference: docs/research/argocd-namespace-management-validation-research.md
+    - name: Deploy cluster-scoped resources
+      role: validated_patterns_deploy_cluster_resources
+      tags: ['cluster-resources', 'rbac', 'kserve']
+      vars:
+        # pattern_namespace, helm_chart_path are inherited from playbook vars (avoid recursion)
+        deploy_cluster_resources: true
+        # Pass non-recursive values files configuration
+        values_files:
+          - "{{ values_global_path }}"
+          - "{{ values_hub_path }}"
+        cluster_rbac:
+          enabled: true
+          external_secrets:
+            enabled: "{{ enable_secrets_mgmt }}"
+          operator:
+            enabled: true
+          workbench:
+            enabled: true
+          argocd:
+            enabled: true
+        kserve:
+          enabled: true
+
+  post_tasks:
+    # ========================================
+    # Deploy ArgoCD Application (after cluster resources are deployed)
+    # ========================================
+    # Note: Application will be created in openshift-gitops namespace (standard approach)
+    # No need to create a separate hub namespace
+
+    - name: Set absolute path to ArgoCD Application manifest
+      set_fact:
+        argocd_app_manifest_path: >-
+          /home/lab-user/openshift-aiops-platform/{{ helm_chart_path }}/argocd-application-hub.yaml
+      tags: ['deploy', 'application']
+
+    - name: Read ArgoCD Application manifest
+      slurp:
+        src: "{{ argocd_app_manifest_path }}"
+      register: argocd_app_manifest
+      tags: ['deploy', 'application']
+
+    - name: Parse multi-document YAML manifest
+      set_fact:
+        argocd_app_documents: "{{ argocd_app_manifest['content'] | b64decode | from_yaml_all | list }}"
+      tags: ['deploy', 'application']
+
+    - name: Apply ArgoCD Application and RBAC resources
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ item }}"
+      loop: "{{ argocd_app_documents }}"
+      when: item is not none
+      tags: ['deploy', 'application']
+
+    - name: Wait for ArgoCD Application to be created
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: "{{ pattern_name }}"
+        namespace: openshift-gitops
+      register: argocd_app
+      until:
+        - argocd_app.resources | length > 0
+      retries: 10
+      delay: 5
+      tags: ['deploy', 'application']
+
+    - name: Display ArgoCD Application status
+      debug:
+        msg: |
+          ✅ ArgoCD Application deployed:
+          - Name: {{ pattern_name }}
+          - Namespace: openshift-gitops
+          - Status: {{ argocd_app.resources[0].status.sync.status | default('Unknown') }}
+          - Health: {{ argocd_app.resources[0].status.health.status | default('Unknown') }}
+      tags: ['deploy', 'application']
+
+    # ========================================
+    # Wait for ArgoCD Application to Sync
+    # ========================================
+    - name: Wait for ArgoCD Application to be synced and healthy
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: "{{ pattern_name }}"
+        namespace: openshift-gitops
+      register: argocd_app_status
+      until:
+        - argocd_app_status.resources | length > 0
+        - argocd_app_status.resources[0].status.sync.status is defined
+        - argocd_app_status.resources[0].status.health.status is defined
+        - argocd_app_status.resources[0].status.sync.status == "Synced"
+        - argocd_app_status.resources[0].status.health.status == "Healthy"
+      retries: 60
+      delay: 10
+      failed_when: false
+      tags: ['deploy', 'application', 'sync']
+
+    - name: Display ArgoCD Application sync status
+      debug:
+        msg: |
+          ArgoCD Application Sync Status:
+          {% if argocd_app_status is defined and argocd_app_status.resources is defined and
+                argocd_app_status.resources | length > 0 and
+                argocd_app_status.resources[0].status is defined %}
+          - Sync Status: {{ argocd_app_status.resources[0].status.sync.status | default('Unknown') }}
+          - Health Status: {{ argocd_app_status.resources[0].status.health.status | default('Unknown') }}
+          {% if argocd_app_status.resources[0].status.sync.status != 'Synced' or
+                argocd_app_status.resources[0].status.health.status != 'Healthy' %}
+          ⚠️  Application not fully synced/healthy yet - validation may show incomplete results
+          {% else %}
+          ✅ Application is synced and healthy
+          {% endif %}
+          {% else %}
+          ⚠️  Application status not available yet - still initializing
+          {% endif %}
+      tags: ['deploy', 'application', 'sync']
+
+    # ========================================
+    # Post-Deployment Validation (after ArgoCD sync)
+    # ========================================
+    - name: Run post-deployment validation
+      include_role:
+        name: validated_patterns_validate
+      vars:
+        validate_namespace: "{{ pattern_namespace }}"
+        validate_pattern_name: "{{ pattern_name }}"
+      when: enable_validation | default(true) | bool
+      tags: ['validation', 'verify']
+
+    # ========================================
+    # Gather Deployment Status
+    # ========================================
+    - name: Gather deployment status
+      block:
+        - name: Get all resources in namespace
+          command: oc get all -n {{ pattern_namespace }}
+          register: all_resources
+          changed_when: false
+          failed_when: false
+
+        - name: Get pods status
+          command: oc get pods -n {{ pattern_namespace }} -o wide
+          register: pods_status
+          changed_when: false
+          failed_when: false
+
+        - name: Get PVCs status
+          command: oc get pvc -n {{ pattern_namespace }}
+          register: pvcs_status
+          changed_when: false
+          failed_when: false
+
+        - name: Get routes
+          command: oc get routes -n {{ pattern_namespace }}
+          register: routes_status
+          changed_when: false
+          failed_when: false
+
+      tags: ['status', 'post-deployment']
+
+    - name: Display deployment completion summary
+      debug:
+        msg: |
+          ========================================
+          Deployment Complete
+          ========================================
+          Pattern: {{ pattern_name }}
+          Namespace: {{ pattern_namespace }}
+
+          Deployment Steps Completed:
+          ✅ Prerequisites validated
+          ✅ Common infrastructure deployed (Helm, ArgoCD, ESO)
+          {% if enable_gitea %}✅ Gitea deployed{% endif %}
+          {% if enable_secrets_mgmt %}✅ Secrets management configured{% endif %}
+          ✅ Notebook validation configured (ADR-029)
+          ✅ Cluster-scoped resources deployed (Hybrid Management Model)
+          ✅ Pattern application deployed (namespaced resources via ArgoCD)
+          {% if enable_validation %}✅ Post-deployment validation passed{% endif %}
+
+          Resources Deployed:
+          {{ all_resources.stdout if all_resources.rc == 0 else 'Unable to retrieve resources' }}
+
+          Next Steps:
+          1. Verify all pods are running:
+             oc get pods -n {{ pattern_namespace }}
+
+          2. Check ArgoCD applications:
+             oc get applications -n openshift-gitops
+
+          3. Run Tekton validation pipeline:
+             tkn pipeline start deployment-validation-pipeline -n openshift-pipelines
+
+          4. Access workbench and execute notebooks:
+             - Navigate to RHODS dashboard
+             - Open AI/ML workbench
+             - Execute notebooks in sequence (00-setup, 01-data-collection, etc.)
+
+          5. Monitor with Prometheus/Grafana:
+             - Check coordination engine metrics
+             - Verify model serving health
+
+          6. Final validation after model deployment:
+             tkn pipeline start model-serving-validation-pipeline -n openshift-pipelines
+
+          Documentation:
+          - Deployment Guide: docs/DEPLOYMENT-GUIDE.md
+          - Notebook Execution: docs/NOTEBOOK-EXECUTION-GUIDE.md
+          - Implementation Plan: docs/IMPLEMENTATION-PLAN.md
+          ========================================
+      tags: ['summary']
+
+    - name: Display pod status (if debug mode)
+      debug:
+        msg: |
+          Pod Status:
+          {{ pods_status.stdout if pods_status.rc == 0 else 'Unable to retrieve pod status' }}
+
+          PVC Status:
+          {{ pvcs_status.stdout if pvcs_status.rc == 0 else 'Unable to retrieve PVC status' }}
+
+          Routes:
+          {{ routes_status.stdout if routes_status.rc == 0 else 'Unable to retrieve routes' }}
+      when: debug_mode
+      tags: ['debug', 'status']

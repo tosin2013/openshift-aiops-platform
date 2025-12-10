@@ -1,0 +1,27 @@
+---
+# Main tasks for validated_patterns_gitea role
+# Purpose: Setup Gitea development environment
+
+- name: Display role purpose
+  debug:
+    msg: "Setting up Gitea development environment"
+
+- name: Include Gitea operator deployment
+  include_tasks: deploy_operator.yml
+
+- name: Include Gitea instance creation
+  include_tasks: create_instance.yml
+
+- name: Include user configuration
+  include_tasks: configure_users.yml
+
+- name: Include repository setup
+  include_tasks: setup_repositories.yml
+
+- name: Display Gitea setup summary
+  debug:
+    msg: |
+      ✅ Gitea setup complete!
+      - Gitea URL: {{ gitea_url }}
+      - Admin user: {{ gitea_admin_user }}
+      - Namespace: {{ gitea_namespace }}

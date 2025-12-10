@@ -1,0 +1,159 @@
+---
+# Configure Tekton RBAC for Jupyter Notebook Validator Operator
+# Reference: https://github.com/tosin2013/jupyter-notebook-validator-operator/blob/main/docs/TEKTON_BUILD_SETUP.md
+#
+# This task configures:
+# 1. ClusterRole/ClusterRoleBinding for operator to manage Tekton resources
+# 2. pipelines-scc SCC for the pipeline ServiceAccount (required for buildah tasks)
+# 3. ServiceAccount creation in validation namespace
+
+- name: Check if Tekton Pipelines is installed
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: openshift-pipelines
+  register: tekton_namespace
+  failed_when: false
+
+- name: Configure Tekton RBAC for operator (if Tekton is installed)
+  when: tekton_namespace.resources | length > 0
+  block:
+    - name: Apply Tekton RBAC template for operator
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('template', 'operator-tekton-rbac.yaml.j2') }}"
+      register: tekton_rbac_result
+
+    - name: Display Tekton RBAC configuration result
+      ansible.builtin.debug:
+        msg: "Tekton RBAC configured for notebook validator operator"
+      when: tekton_rbac_result is changed
+
+    # ===========================================================================
+    # PIPELINES-SCC CONFIGURATION
+    # Reference: TEKTON_BUILD_SETUP.md - Required for buildah tasks
+    # ===========================================================================
+    - name: Ensure validation namespace exists
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ notebooks_validation_namespace }}"
+            labels:
+              app.kubernetes.io/part-of: self-healing-platform
+
+    - name: Check if pipeline ServiceAccount exists in validation namespace
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: ServiceAccount
+        name: "{{ notebooks_tekton_service_account }}"
+        namespace: "{{ notebooks_validation_namespace }}"
+      register: pipeline_sa
+
+    - name: Create pipeline ServiceAccount if it doesn't exist
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: "{{ notebooks_tekton_service_account }}"
+            namespace: "{{ notebooks_validation_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: jupyter-notebook-validator-operator
+              app.kubernetes.io/part-of: self-healing-platform
+      when: pipeline_sa.resources | length == 0
+
+    # Grant pipelines-scc to pipeline ServiceAccount
+    # This is REQUIRED for Tekton buildah tasks to function
+    - name: Grant pipelines-scc to pipeline ServiceAccount
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: "pipelines-scc-{{ notebooks_validation_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: ansible
+              app.kubernetes.io/part-of: self-healing-platform
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: system:openshift:scc:pipelines-scc
+          subjects:
+            - kind: ServiceAccount
+              name: "{{ notebooks_tekton_service_account }}"
+              namespace: "{{ notebooks_validation_namespace }}"
+
+    # ===========================================================================
+    # VALIDATION NAMESPACE RBAC
+    # Allow operator to create pods/jobs in validation namespace
+    # ===========================================================================
+    - name: Create Role for operator in validation namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: jupyter-notebook-validator-validation-role
+            namespace: "{{ notebooks_validation_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: ansible
+          rules:
+            - apiGroups: [""]
+              resources: ["pods", "pods/log", "configmaps", "secrets", "serviceaccounts"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            - apiGroups: ["batch"]
+              resources: ["jobs"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            - apiGroups: ["tekton.dev"]
+              resources: ["pipelineruns", "taskruns"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+    - name: Create RoleBinding for operator in validation namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: jupyter-notebook-validator-validation-rolebinding
+            namespace: "{{ notebooks_validation_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: ansible
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: jupyter-notebook-validator-validation-role
+          subjects:
+            - kind: ServiceAccount
+              name: jupyter-notebook-validator-controller-manager
+              namespace: "{{ notebooks_operator_namespace }}"
+
+    - name: Display pipelines-scc configuration message
+      ansible.builtin.debug:
+        msg: |
+          Tekton RBAC Configuration Complete:
+          ====================================
+          - ClusterRole/ClusterRoleBinding for operator Tekton access
+          - pipelines-scc granted to '{{ notebooks_tekton_service_account }}' in '{{ notebooks_validation_namespace }}'
+          - Role/RoleBinding for operator in validation namespace
+
+          The operator can now:
+          - Create PipelineRuns and TaskRuns
+          - Execute buildah tasks with elevated privileges
+          - Manage validation pods and jobs
+
+- name: Tekton not installed
+  ansible.builtin.debug:
+    msg: |
+      Tekton Pipelines not found - skipping Tekton RBAC configuration.
+
+      If you plan to use Tekton builds:
+      1. Install OpenShift Pipelines operator
+      2. Re-run this role to configure RBAC
+  when: tekton_namespace.resources | length == 0

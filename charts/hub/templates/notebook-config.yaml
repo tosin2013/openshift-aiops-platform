@@ -1,0 +1,125 @@
+# Notebook Configuration ConfigMap
+# Automatically injects S3 configuration into notebooks
+# Notebooks can read these values without manual configuration
+
+{{- if .Values.workbench.enabled }}
+{{- if .Values.objectStore.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notebook-s3-config
+  namespace: {{ include "self-healing-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/component: workbench
+    app.kubernetes.io/part-of: self-healing-platform
+    {{- include "self-healing-platform.labels" . | nindent 4 }}
+data:
+  # S3 Configuration for Notebooks
+  # These values are automatically available in the notebook environment
+
+  # S3 Endpoint URL (auto-detected from NooBaa)
+  S3_ENDPOINT: {{ include "self-healing-platform.s3Endpoint" . | quote }}
+
+  # S3 Region
+  S3_REGION: {{ include "self-healing-platform.s3Region" . | quote }}
+
+  # S3 Bucket Names
+  MODEL_BUCKET: {{ include "self-healing-platform.modelBucket" . | quote }}
+  TRAINING_DATA_BUCKET: {{ include "self-healing-platform.trainingDataBucket" . | quote }}
+  INFERENCE_RESULTS_BUCKET: {{ include "self-healing-platform.inferenceResultsBucket" . | quote }}
+
+  # SSL Verification
+  AWS_SSL_VERIFY: {{ include "self-healing-platform.sslVerify" . | quote }}
+
+  # Python script to configure S3 in notebooks
+  setup-s3.py: |
+    #!/usr/bin/env python3
+    """
+    Auto-configure S3 for notebooks
+
+    Usage in notebook:
+    ```python
+    import os
+    import sys
+    sys.path.insert(0, '/etc/notebook-config')
+    from setup_s3 import configure_s3
+
+    # Auto-configure S3
+    s3_config = configure_s3()
+    print(f"S3 Endpoint: {s3_config['endpoint']}")
+    print(f"Model Bucket: {s3_config['model_bucket']}")
+    ```
+    """
+
+    import os
+    from pathlib import Path
+
+    def configure_s3():
+        """
+        Auto-configure S3 from environment variables
+        Returns dict with S3 configuration
+        """
+        config = {
+            'endpoint': os.getenv('S3_ENDPOINT', 'https://s3.openshift-storage.svc.cluster.local'),
+            'region': os.getenv('S3_REGION', 'us-east-1'),
+            'model_bucket': os.getenv('MODEL_BUCKET', 'model-storage'),
+            'training_data_bucket': os.getenv('TRAINING_DATA_BUCKET', 'training-data'),
+            'inference_results_bucket': os.getenv('INFERENCE_RESULTS_BUCKET', 'inference-results'),
+            'ssl_verify': os.getenv('AWS_SSL_VERIFY', 'false').lower() == 'true',
+            'access_key': os.getenv('AWS_ACCESS_KEY_ID', ''),
+            'secret_key': os.getenv('AWS_SECRET_ACCESS_KEY', ''),
+        }
+
+        # Validate configuration
+        if not config['access_key'] or not config['secret_key']:
+            print("⚠️  Warning: AWS credentials not found in environment")
+            print("   Make sure the notebook pod has access to model-storage-config secret")
+
+        return config
+
+    if __name__ == '__main__':
+        config = configure_s3()
+        print("✅ S3 Configuration:")
+        for key, value in config.items():
+            if 'key' not in key.lower():  # Don't print secrets
+                print(f"  {key}: {value}")
+
+---
+# Workbench Pod Preset to inject S3 configuration
+# This automatically adds environment variables to notebook pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notebook-env-setup
+  namespace: {{ include "self-healing-platform.namespace" . }}
+  labels:
+    app.kubernetes.io/component: workbench
+    app.kubernetes.io/part-of: self-healing-platform
+data:
+  # Bash script to setup S3 environment in notebooks
+  setup-s3-env.sh: |
+    #!/bin/bash
+    # Auto-setup S3 environment variables in notebook
+
+    echo "Setting up S3 environment variables..."
+
+    # Source ConfigMap values
+    export S3_ENDPOINT="{{ include "self-healing-platform.s3Endpoint" . }}"
+    export S3_REGION="{{ include "self-healing-platform.s3Region" . }}"
+    export MODEL_BUCKET="{{ include "self-healing-platform.modelBucket" . }}"
+    export TRAINING_DATA_BUCKET="{{ include "self-healing-platform.trainingDataBucket" . }}"
+    export INFERENCE_RESULTS_BUCKET="{{ include "self-healing-platform.inferenceResultsBucket" . }}"
+    export AWS_SSL_VERIFY="{{ include "self-healing-platform.sslVerify" . }}"
+
+    # Source secret values (if available)
+    if [ -f /var/run/secrets/s3/AWS_ACCESS_KEY_ID ]; then
+      export AWS_ACCESS_KEY_ID=$(cat /var/run/secrets/s3/AWS_ACCESS_KEY_ID)
+      export AWS_SECRET_ACCESS_KEY=$(cat /var/run/secrets/s3/AWS_SECRET_ACCESS_KEY)
+    fi
+
+    echo "✅ S3 environment configured"
+    echo "   Endpoint: $S3_ENDPOINT"
+    echo "   Model Bucket: $MODEL_BUCKET"
+
+{{- end }}
+{{- end }}

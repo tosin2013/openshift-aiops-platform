@@ -1,0 +1,84 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: validate-s3-connectivity
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: validate-s3-connectivity
+    app.kubernetes.io/part-of: s3-configuration
+spec:
+  description: |
+    Validates S3 connectivity and credentials from ObjectBucketClaim.
+    Checks:
+    - S3 endpoint availability
+    - AWS credentials validity
+    - Bucket accessibility
+    - Read/write permissions
+
+  params:
+    - name: namespace
+      type: string
+      default: self-healing-platform
+      description: Target namespace for S3 validation
+    - name: secret-name
+      type: string
+      default: model-storage-config
+      description: Name of the secret containing S3 credentials
+
+  steps:
+    - name: validate-s3-endpoint
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        NAMESPACE="$(params.namespace)"
+        SECRET_NAME="$(params.secret-name)"
+
+        echo "=== Validating S3 Connectivity ==="
+        echo "Namespace: $NAMESPACE"
+        echo "Secret: $SECRET_NAME"
+
+        # Check if secret exists
+        if ! oc get secret "$SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
+          echo "❌ FAIL: Secret $SECRET_NAME not found in namespace $NAMESPACE"
+          exit 1
+        fi
+
+        echo "✅ PASS: Secret found"
+
+        # Extract S3 credentials from secret
+        AWS_ACCESS_KEY_ID=$(oc get secret "$SECRET_NAME" -n "$NAMESPACE" -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+        AWS_SECRET_ACCESS_KEY=$(oc get secret "$SECRET_NAME" -n "$NAMESPACE" -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+        AWS_S3_ENDPOINT=$(oc get secret "$SECRET_NAME" -n "$NAMESPACE" -o jsonpath='{.data.AWS_S3_ENDPOINT}' | base64 -d)
+        AWS_S3_BUCKET=$(oc get secret "$SECRET_NAME" -n "$NAMESPACE" -o jsonpath='{.data.AWS_S3_BUCKET}' | base64 -d)
+
+        if [[ -z "$AWS_ACCESS_KEY_ID" ]] || [[ -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+          echo "❌ FAIL: AWS credentials not found in secret"
+          exit 1
+        fi
+
+        echo "✅ PASS: AWS credentials extracted"
+        echo "S3 Endpoint: $AWS_S3_ENDPOINT"
+        echo "S3 Bucket: $AWS_S3_BUCKET"
+
+        # Test S3 connectivity using AWS CLI
+        export AWS_ACCESS_KEY_ID
+        export AWS_SECRET_ACCESS_KEY
+        export AWS_DEFAULT_REGION=us-east-1
+
+        # Install AWS CLI if not present
+        if ! command -v aws &> /dev/null; then
+          echo "Installing AWS CLI..."
+          pip install awscli-local &>/dev/null || pip3 install awscli-local &>/dev/null
+        fi
+
+        # Test S3 connectivity
+        echo "Testing S3 connectivity..."
+        if aws s3 ls "s3://$AWS_S3_BUCKET" --endpoint-url "$AWS_S3_ENDPOINT" --no-verify-ssl &>/dev/null; then
+          echo "✅ PASS: S3 bucket is accessible"
+        else
+          echo "⚠️  WARNING: Could not list S3 bucket (may be empty or permission issue)"
+        fi
+
+        echo "=== S3 Connectivity Validation Complete ==="

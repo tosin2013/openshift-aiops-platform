@@ -1,0 +1,38 @@
+---
+# Delete GitOps Namespace (Optional)
+
+- name: Display GitOps cleanup warning
+  debug:
+    msg: |
+      ⚠️  Deleting GitOps namespace ({{ cleanup_gitops_namespace }})
+      This will remove ArgoCD completely.
+
+- name: Delete GitOps namespace
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ cleanup_gitops_namespace }}"
+    state: absent
+    wait: no
+    wait_timeout: "{{ cleanup_wait_timeout }}"
+  ignore_errors: yes
+
+- name: Wait for GitOps namespace deletion
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ cleanup_gitops_namespace }}"
+  register: gitops_ns_status
+  until: gitops_ns_status.resources | length == 0
+  retries: 30
+  delay: 10
+  ignore_errors: yes
+
+- name: Display GitOps cleanup status
+  debug:
+    msg: |
+      {% if gitops_ns_status.resources | length == 0 %}
+      ✅ GitOps namespace deleted
+      {% else %}
+      ⚠️  GitOps namespace still exists (may be terminating)
+      {% endif %}

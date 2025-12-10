@@ -1,0 +1,113 @@
+---
+# Playbook: Cleanup Self-Healing Platform Environment
+# Purpose: Clean up deployment resources using validated_patterns_cleanup role
+# Usage: ansible-playbook ansible/playbooks/cleanup_environment.yml
+#        ansible-playbook ansible/playbooks/cleanup_environment.yml -e "cleanup_gitops=true cleanup_operator=true"
+
+- name: Cleanup Self-Healing Platform Environment
+  hosts: localhost
+  gather_facts: yes
+
+  vars:
+    # Pattern name to clean up
+    cleanup_pattern_name: "self-healing-platform"
+
+    # Namespace where the Pattern CR and operator are installed
+    cleanup_operator_namespace: "openshift-operators"
+
+    # GitOps namespace where ArgoCD is installed
+    cleanup_gitops_namespace: "openshift-gitops"
+
+    # Application namespaces to delete
+    cleanup_app_namespaces:
+      - self-healing-platform
+      - validated-patterns
+      - quarkus-app-dev
+      - quarkus-app-prod
+
+    # Wait timeout for resource deletion (seconds)
+    cleanup_wait_timeout: 300
+
+    # Optional: Delete GitOps namespace (removes ArgoCD completely)
+    # NOTE: Usually set to FALSE for iterative testing/development
+    # ArgoCD is typically deployed by common/ subtree and shared across patterns
+    cleanup_gitops: false
+
+    # Optional: Delete Gitea namespace (removes local git repository)
+    # NOTE: Usually set to FALSE for development environments
+    # Gitea is used for local pattern development and should be retained
+    cleanup_gitea: false
+    cleanup_gitea_namespace: "gitea"
+
+    # Optional: Uninstall Validated Patterns Operator
+    # NOTE: Usually set to FALSE for iterative testing
+    # Operator can be reused across multiple pattern deployments
+    cleanup_operator: false
+
+    # Debug mode
+    cleanup_debug: true
+
+  pre_tasks:
+    - name: Display cleanup configuration
+      debug:
+        msg: |
+          ========================================
+          Cleanup Configuration
+          ========================================
+          Pattern: {{ cleanup_pattern_name }}
+          Operator Namespace: {{ cleanup_operator_namespace }}
+          GitOps Namespace: {{ cleanup_gitops_namespace }}
+          App Namespaces: {{ cleanup_app_namespaces | join(', ') }}
+
+          Cleanup Options:
+          - GitOps: {{ cleanup_gitops | default(false) }}
+          - Gitea: {{ cleanup_gitea | default(false) }}
+          - Operator: {{ cleanup_operator | default(false) }}
+          ========================================
+
+    - name: Verify oc command availability
+      command: oc version
+      register: oc_version
+      changed_when: false
+      failed_when: oc_version.rc != 0
+
+    - name: Verify cluster connectivity
+      command: oc cluster-info
+      register: cluster_info
+      changed_when: false
+      failed_when: cluster_info.rc != 0
+
+  roles:
+    - validated_patterns_cleanup
+
+  post_tasks:
+    - name: Verify cleanup completion
+      block:
+        - name: Check for remaining Pattern CRs
+          command: oc get pattern -A
+          register: pattern_check
+          changed_when: false
+
+        - name: Check for remaining ArgoCD applications
+          command: oc get applications -n {{ cleanup_gitops_namespace }}
+          register: app_check
+          changed_when: false
+          ignore_errors: yes
+
+        - name: Display cleanup verification
+          debug:
+            msg: |
+              ========================================
+              Cleanup Verification
+              ========================================
+              Pattern CRs remaining: {{ pattern_check.stdout_lines | length - 1 }}
+              ArgoCD Apps remaining: {{ app_check.stdout_lines | length - 1 if app_check.rc == 0 else 'N/A' }}
+
+              ✅ Cleanup completed successfully!
+              ========================================
+
+              Next steps:
+              1. Verify all resources are cleaned: oc get all -n self-healing-platform
+              2. Proceed with fresh deployment
+              3. Run: make install (for Validated Patterns deployment)
+              ========================================

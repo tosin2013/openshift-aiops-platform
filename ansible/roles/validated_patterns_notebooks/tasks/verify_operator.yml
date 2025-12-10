@@ -1,0 +1,46 @@
+---
+# Verify Jupyter Notebook Validator Operator deployment
+
+- name: Wait for operator deployment to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: notebook-validator-controller-manager
+    namespace: "{{ notebooks_operator_namespace }}"
+  register: operator_deployment
+  until:
+    - operator_deployment.resources | length > 0
+    - operator_deployment.resources[0].status.readyReplicas is defined
+    - operator_deployment.resources[0].status.readyReplicas >= 1
+  retries: 30
+  delay: 10
+
+- name: Display operator deployment status
+  debug:
+    msg: "Operator deployment ready: {{ operator_deployment.resources[0].status.readyReplicas }} replicas"
+
+- name: Check NotebookValidationJob CRD
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: notebookvalidationjobs.mlops.mlops.dev
+  register: notebook_crd
+
+- name: Fail if NotebookValidationJob CRD not found
+  fail:
+    msg: "NotebookValidationJob CRD not registered. Operator installation may have failed."
+  when: notebook_crd.resources | length == 0
+
+- name: Check webhook configuration
+  kubernetes.core.k8s_info:
+    api_version: admissionregistration.k8s.io/v1
+    kind: ValidatingWebhookConfiguration
+  register: webhooks
+
+- name: Display webhook count
+  debug:
+    msg: "Found {{ webhooks.resources | select('search', 'jupyter') | list | length }} webhook configurations"
+
+- name: Display operator verification success
+  debug:
+    msg: "✅ Jupyter Notebook Validator Operator verified successfully"

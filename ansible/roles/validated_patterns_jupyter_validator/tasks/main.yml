@@ -1,0 +1,35 @@
+---
+# Main tasks for validated_patterns_jupyter_validator role
+# Deploys Jupyter Notebook Validator Operator via kustomize
+
+- name: Display role start message
+  debug:
+    msg: |
+      Deploying Jupyter Notebook Validator Operator
+      Method: kustomize (self-contained manifests)
+      Version: OCP {{ jupyter_validator_openshift_version }}
+      Overlay: {{ jupyter_validator_kustomize_overlay }}
+
+- name: Check if cert-manager is available (for webhooks)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: cert-manager
+  register: certmanager_namespace
+  ignore_errors: yes
+
+- name: Set webhook configuration based on cert-manager
+  set_fact:
+    jupyter_validator_enable_webhooks: "{{ certmanager_namespace.resources | length > 0 }}"
+
+- name: Display webhook status
+  debug:
+    msg: "Webhooks {{ 'enabled' if jupyter_validator_enable_webhooks else 'disabled' }} (cert-manager {{ 'found' if jupyter_validator_enable_webhooks else 'not found' }})"
+
+- name: Deploy operator using kustomize
+  include_tasks: deploy_operator.yml
+  when: jupyter_validator_operator_enabled | default(true)
+
+- name: Verify operator deployment
+  include_tasks: verify_operator.yml
+  when: jupyter_validator_operator_enabled | default(true)

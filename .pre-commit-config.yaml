@@ -1,0 +1,91 @@
+# Pre-commit hooks for secret detection and code quality
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # Detect secrets in code
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: Detect secrets
+        args:
+          - '--baseline'
+          - '.secrets.baseline'
+          - '--exclude-files'
+          - '.*\.example$'
+          - '--exclude-files'
+          - 'SECURITY-INCIDENT-RESPONSE\.md'
+        exclude: |
+          (?x)^(
+            .*\.example$|
+            .*\.md$|
+            SECURITY-INCIDENT-RESPONSE\.md|
+            docs/SECURE-CONFIGURATION\.md
+          )
+
+  # Check for large files
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+        name: Check for large files
+
+  # Prevent committing to protected branches (disabled for initial setup)
+  # - repo: https://github.com/pre-commit/pre-commit-hooks
+  #   rev: v6.0.0
+  #   hooks:
+  #     - id: no-commit-to-branch
+  #       name: Don't commit to main
+  #       args: ['--branch', 'main']
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.1
+    hooks:
+      - id: yamllint
+        name: Lint YAML files
+        args: ['-c', '.yamllint.yml']
+
+  # Check for merge conflicts
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+
+  # Check YAML syntax
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        name: Check YAML syntax
+        args: ['--allow-multiple-documents']
+        exclude: 'charts/.*templates/.*\.yaml'
+
+  # Check JSON syntax
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-json
+        name: Check JSON syntax
+
+  # Trim trailing whitespace
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+
+  # Fix end of files
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+        name: Fix end of files
+
+# Setup instructions:
+# 1. Install pre-commit: pip install pre-commit
+# 2. Install hooks: pre-commit install
+# 3. Generate secrets baseline: detect-secrets scan --baseline .secrets.baseline
+# 4. Test: pre-commit run --all-files

@@ -1,0 +1,226 @@
+---
+# ⚠️ DEPRECATED: This OLM-based installation is deprecated
+# USE INSTEAD: validated_patterns_jupyter_validator role (Kustomize-based)
+#
+# REASON: jupyter-notebook-validator-operator is NOT published to OperatorHub.io
+# The operator must be installed via Kustomize manifests from GitHub
+# See: k8s/operators/jupyter-notebook-validator/overlays/dev-ocp4.18/
+#
+# This file is kept for reference only and should not be used in production
+# ============================================================================
+
+# Deploy Jupyter Notebook Validator Operator via OperatorHub.io/OLM (DEPRECATED)
+# Reference: https://operatorhub.io/operator/jupyter-notebook-validator-operator
+# Reference: https://github.com/tosin2013/jupyter-notebook-validator-operator/blob/main/docs/WEBHOOK_CONFIGURATION.md
+#
+# NOTE: The operator is on OperatorHub.io, NOT in OpenShift's built-in community-operators catalog.
+# We must first add the operatorhubio-catalog CatalogSource to OpenShift.
+
+# ==============================================================================
+# DEPRECATION WARNING
+# ==============================================================================
+
+- name: Display deprecation warning
+  debug:
+    msg: |
+      ⚠️  WARNING: OLM-based installation is deprecated!
+
+      This role attempts to install jupyter-notebook-validator-operator via OLM,
+      but the operator is NOT published to OperatorHub.io.
+
+      USE INSTEAD: validated_patterns_jupyter_validator role
+      Location: ansible/roles/validated_patterns_jupyter_validator/
+
+      The new role uses Kustomize manifests from:
+      k8s/operators/jupyter-notebook-validator/overlays/dev-ocp4.18/
+
+- name: Fail if OLM installation is explicitly requested
+  fail:
+    msg: |
+      ❌ Cannot install jupyter-notebook-validator-operator via OLM!
+
+      The operator is not published to OperatorHub.io.
+      Use the validated_patterns_jupyter_validator role instead.
+  when:
+    - notebooks_operator_enabled | default(false)
+    - notebooks_install_method | default("olm") == "olm"
+
+# ==============================================================================
+# Step 1: Create OperatorHub.io CatalogSource (if not exists) - DISABLED
+# ==============================================================================
+
+- name: Check if operatorhubio-catalog CatalogSource exists
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: CatalogSource
+    name: operatorhubio-catalog
+    namespace: "{{ notebooks_operator_catalog_namespace }}"
+  register: operatorhubio_catalog
+
+- name: Create OperatorHub.io CatalogSource
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: CatalogSource
+      metadata:
+        name: operatorhubio-catalog
+        namespace: "{{ notebooks_operator_catalog_namespace }}"
+      spec:
+        sourceType: grpc
+        image: "{{ notebooks_operatorhubio_catalog_image }}"
+        displayName: OperatorHub.io Community Operators
+        publisher: OperatorHub.io
+        updateStrategy:
+          registryPoll:
+            interval: 60m
+  when:
+    - notebooks_create_operatorhubio_catalog | default(true)
+    - operatorhubio_catalog.resources | length == 0
+
+- name: Wait for OperatorHub.io CatalogSource to be ready
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: CatalogSource
+    name: operatorhubio-catalog
+    namespace: "{{ notebooks_operator_catalog_namespace }}"
+  register: catalog_status
+  until:
+    - catalog_status.resources | length > 0
+    - catalog_status.resources[0].status is defined
+    - catalog_status.resources[0].status.connectionState is defined
+    - catalog_status.resources[0].status.connectionState.lastObservedState == 'READY'
+  retries: 30
+  delay: 10
+  when: notebooks_create_operatorhubio_catalog | default(true)
+
+- name: Display CatalogSource status
+  debug:
+    msg: "OperatorHub.io CatalogSource is ready in {{ notebooks_operator_catalog_namespace }}"
+  when: notebooks_create_operatorhubio_catalog | default(true)
+
+# ==============================================================================
+# Step 2: Create Operator Namespace
+# ==============================================================================
+
+- name: Check if operator namespace exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ notebooks_operator_namespace }}"
+  register: operator_namespace
+
+- name: Create operator namespace if it doesn't exist
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ notebooks_operator_namespace }}"
+        labels:
+          app.kubernetes.io/name: jupyter-notebook-validator-operator
+          app.kubernetes.io/managed-by: ansible
+          openshift.io/cluster-monitoring: "true"
+  when: operator_namespace.resources | length == 0
+
+# ==============================================================================
+# Step 3: Check for Existing Installation
+# ==============================================================================
+
+- name: Check if operator is already installed via OLM
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: jupyter-notebook-validator-operator
+    namespace: "{{ notebooks_operator_namespace }}"
+  register: existing_subscription
+
+- name: Display existing operator status
+  debug:
+    msg: "Operator subscription exists: {{ existing_subscription.resources | length > 0 }}"
+
+# ==============================================================================
+# Step 4: Install Operator via OLM
+# ==============================================================================
+
+- name: Deploy Jupyter Notebook Validator Operator via OLM
+  when:
+    - existing_subscription.resources | length == 0
+    - notebooks_install_method == 'olm'
+  block:
+    - name: Create OperatorGroup for AllNamespaces mode
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: operators.coreos.com/v1
+          kind: OperatorGroup
+          metadata:
+            name: jupyter-validator-operatorgroup
+            namespace: "{{ notebooks_operator_namespace }}"
+          spec: {}
+          # NOTE: Empty spec enables AllNamespaces install mode
+          # The operator only supports AllNamespaces mode (not OwnNamespace/SingleNamespace/MultiNamespace)
+
+    - name: Create Subscription for Jupyter Notebook Validator Operator
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: jupyter-notebook-validator-operator
+            namespace: "{{ notebooks_operator_namespace }}"
+          spec:
+            channel: "{{ notebooks_operator_channel }}"
+            name: jupyter-notebook-validator-operator
+            source: "{{ notebooks_operator_catalog_source }}"
+            sourceNamespace: "{{ notebooks_operator_catalog_namespace }}"
+            installPlanApproval: Automatic
+            config:
+              env:
+                - name: ENABLE_WEBHOOKS
+                  value: "{{ notebooks_enable_webhooks | string | lower }}"
+
+    - name: Wait for operator CSV to be installed
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ notebooks_operator_namespace }}"
+        label_selectors:
+          - "operators.coreos.com/jupyter-notebook-validator-operator.{{ notebooks_operator_namespace }}"
+      register: operator_csv
+      until:
+        - operator_csv.resources | length > 0
+        - operator_csv.resources[0].status.phase is defined
+        - operator_csv.resources[0].status.phase == 'Succeeded'
+      retries: 30
+      delay: 10
+
+    - name: Display operator CSV status
+      debug:
+        msg: "Operator CSV installed: {{ operator_csv.resources[0].metadata.name }}"
+      when: operator_csv.resources | length > 0
+
+# ==============================================================================
+# Step 5: Wait for Operator Deployment
+# ==============================================================================
+
+- name: Wait for operator deployment to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ notebooks_operator_namespace }}"
+    label_selectors:
+      - "control-plane=controller-manager"
+  register: operator_deployment
+  until:
+    - operator_deployment.resources | length > 0
+    - operator_deployment.resources[0].status.readyReplicas is defined
+    - operator_deployment.resources[0].status.readyReplicas >= 1
+  retries: 30
+  delay: 10
+
+- name: Display operator deployment message
+  debug:
+    msg: "Jupyter Notebook Validator Operator {{ notebooks_operator_version | default('v1.0.4-ocp4.20') }} deployed to {{ notebooks_operator_namespace }} via OperatorHub.io (OLM)"

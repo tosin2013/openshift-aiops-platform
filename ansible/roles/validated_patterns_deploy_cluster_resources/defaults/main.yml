@@ -1,0 +1,53 @@
+---
+# Default variables for deploying cluster-scoped resources
+# These resources are deployed separately from namespaced resources
+# to support namespaced ArgoCD deployments (Pattern 3: Hybrid Management Model)
+
+# Enable deployment of cluster-scoped resources
+deploy_cluster_resources: true
+
+# Pattern configuration
+pattern_name: "self-healing-platform"
+pattern_namespace: "self-healing-platform"
+
+# Cluster-scoped RBAC resources
+cluster_rbac:
+  enabled: true
+  # External Secrets Operator ClusterRole/ClusterRoleBinding
+  external_secrets:
+    enabled: true
+    cluster_role_name: "external-secrets-{{ pattern_namespace }}"
+    cluster_role_binding_name: "external-secrets-{{ pattern_namespace }}"
+  # Self-healing operator ClusterRole/ClusterRoleBinding
+  operator:
+    enabled: true
+    cluster_role_name: "self-healing-operator-cluster"
+    cluster_role_binding_name: "self-healing-operator-cluster"
+  # Workbench ClusterRole/ClusterRoleBinding
+  workbench:
+    enabled: true
+    cluster_role_name: "self-healing-workbench-cluster"
+    cluster_role_binding_name: "self-healing-workbench-cluster"
+    prometheus_binding_name: "self-healing-workbench-prometheus"
+  # ArgoCD ClusterRole/ClusterRoleBinding
+  argocd:
+    enabled: true
+    cluster_role_name: "self-healing-platform-argocd-hub"
+    cluster_role_binding_name: "self-healing-platform-argocd-hub"
+
+# KServe ClusterServingRuntime resources
+kserve:
+  enabled: true
+  cluster_serving_runtimes: []
+  # Example:
+  # - name: tensorflow-runtime
+  #   image: tensorflow/serving:latest
+
+# Helm chart path (for extracting cluster-scoped resources)
+helm_chart_path: "charts/hub"
+values_files:
+  - "values-global.yaml"
+  - "values-hub.yaml"
+
+# Kubeconfig path
+kubeconfig_path: "{{ lookup('env', 'KUBECONFIG') | default('~/.kube/config', true) }}"

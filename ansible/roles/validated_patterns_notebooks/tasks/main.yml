@@ -1,0 +1,70 @@
+---
+# ⚠️ DEPRECATED ROLE - DO NOT USE
+# This role uses OLM-based installation which is not supported
+# USE INSTEAD: validated_patterns_jupyter_validator (Kustomize-based)
+#
+# Main tasks for validated_patterns_notebooks role
+# Deploys Jupyter Notebook Validator Operator and manages NotebookValidationJob CRDs
+
+- name: Display deprecation warning
+  debug:
+    msg: |
+      ==========================================
+      ⚠️  DEPRECATION WARNING
+      ==========================================
+      Role: validated_patterns_notebooks
+      Status: DEPRECATED - OLM installation not supported
+
+      Reason: jupyter-notebook-validator-operator is NOT published to OperatorHub.io
+
+      USE INSTEAD:
+      - Role: validated_patterns_jupyter_validator
+      - Location: ansible/roles/validated_patterns_jupyter_validator/
+      - Method: Kustomize manifests (k8s/operators/jupyter-notebook-validator/)
+      ==========================================
+
+- name: Display role start message
+  debug:
+    msg: "Starting Jupyter Notebook Validator Operator deployment (DEPRECATED - use validated_patterns_jupyter_validator instead)"
+
+- name: Check if operator deployment is enabled
+  debug:
+    msg: "Operator deployment enabled: {{ notebooks_operator_enabled }}"
+
+- name: Check cert-manager prerequisites
+  include_tasks: check_certmanager.yml
+  when: notebooks_operator_enabled | bool
+
+- name: Deploy Jupyter Notebook Validator Operator (DEPRECATED - will fail)
+  include_tasks: deploy_operator.yml
+  when:
+    - notebooks_operator_enabled | bool
+    - notebooks_force_olm_installation | default(false) | bool  # Disabled by default
+
+- name: Configure Tekton RBAC for operator
+  include_tasks: configure_tekton_rbac.yml
+  when: notebooks_operator_enabled | bool
+
+- name: Create Tekton build workspace PVCs
+  include_tasks: create_tekton_pvcs.yml
+  when: notebooks_operator_enabled | bool
+
+- name: Verify operator deployment
+  include_tasks: verify_operator.yml
+  when: notebooks_operator_enabled | bool
+
+- name: Deploy GitHub credentials secret
+  include_tasks: deploy_secrets.yml
+  when:
+    - notebooks_operator_enabled | bool
+    - notebooks_deploy_github_secrets | default(true) | bool
+
+- name: Create NotebookValidationJob CRDs
+  include_tasks: create_validation_jobs.yml
+  when:
+    - notebooks_operator_enabled | bool
+    - notebooks_create_validation_jobs | default(false) | bool
+
+- name: Display role completion message
+  debug:
+    msg: "Jupyter Notebook Validator Operator deployment complete"

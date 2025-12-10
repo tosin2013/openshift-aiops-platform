@@ -1,0 +1,30 @@
+---
+# Check required operators are installed
+
+- name: Get installed operators
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: openshift-operators
+  register: installed_operators
+  failed_when: installed_operators.resources | length == 0
+
+- name: Extract operator names
+  set_fact:
+    installed_operator_names: "{{ installed_operators.resources | map(attribute='metadata.name') | list }}"
+
+- name: Check for OpenShift GitOps operator
+  assert:
+    that:
+      - installed_operator_names | select('search', 'openshift-gitops') | list | length > 0
+    fail_msg: "OpenShift GitOps operator not found. Please install it first."
+    success_msg: "✅ OpenShift GitOps operator is installed"
+
+- name: Check for OpenShift Pipelines operator (optional)
+  debug:
+    msg: "ℹ️  OpenShift Pipelines operator not found (optional)"
+  when: installed_operator_names | select('search', 'openshift-pipelines') | list | length == 0
+
+- name: Display installed operators
+  debug:
+    msg: "Installed operators: {{ installed_operator_names | join(', ') }}"

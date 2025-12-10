@@ -1,0 +1,33 @@
+---
+# Main tasks for validated_patterns_validate role
+# Purpose: Comprehensive validation framework
+
+- name: Display role purpose
+  debug:
+    msg: "Running comprehensive validation"
+
+- name: Include pre-deployment validation
+  include_tasks: validate_pre_deployment.yml
+
+- name: Include deployment monitoring
+  include_tasks: validate_deployment.yml
+
+- name: Include post-deployment validation
+  include_tasks: validate_post_deployment.yml
+
+- name: Include health checks
+  include_tasks: validate_health.yml
+
+- name: Include notebook validation (CRD-based)
+  include_tasks: validate_notebooks.yml
+  when: validate_notebooks_enabled | default(true) | bool
+
+- name: Display validation summary
+  debug:
+    msg: |
+      ✅ Validation complete!
+      - Pre-deployment: Passed
+      - Deployment: Passed
+      - Post-deployment: Passed
+      - Health: Passed
+      - Notebooks: {{ 'Passed' if validate_notebooks_enabled | default(true) | bool else 'Skipped' }}

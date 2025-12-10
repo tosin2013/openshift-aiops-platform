@@ -1,0 +1,140 @@
+# Validated Patterns - Self-Healing Platform
+# Clustergroup Configuration
+# This file configures the clustergroup chart to deploy the hub cluster resources
+# Reference: Validated Patterns Toolkit documentation
+
+# Global configuration
+global:
+  # Pattern name - MUST match values-global.yaml
+  pattern: self-healing-platform
+
+  # Options for ArgoCD sync behavior
+  options:
+    applicationRetryLimit: 20
+    installPlanApproval: Automatic
+    syncPolicy: Automatic
+
+  # Git repository configuration
+  git:
+    repoURL: "https://gitea-with-admin-gitea.apps.cluster-fn2qb.fn2qb.sandbox1343.opentlc.com/opentlc-mgr/openshift-aiops-platform.git"
+    revision: main
+
+  # Target revision for ArgoCD
+  targetRevision: main
+
+# Clustergroup configuration
+clusterGroup:
+  # Cluster group name
+  name: hub
+
+  # Is this the hub cluster?
+  isHubCluster: true
+
+  # Target cluster (in-cluster for hub)
+  targetCluster: in-cluster
+
+  # Shared value files (relative to repo root)
+  sharedValueFiles:
+    - /values-global.yaml
+
+  # Namespaces to create before deploying applications
+  namespaces:
+    - name: self-healing-platform
+      labels:
+        openshift.io/cluster-monitoring: "true"
+      annotations:
+        openshift.io/description: "Self-Healing Platform for AIOps automation"
+
+  # Operator subscriptions managed by clustergroup
+  # Note: Most operators are already installed, this ensures they exist
+  subscriptions:
+    # External Secrets Operator - already installed via Ansible
+    external-secrets-operator:
+      name: external-secrets-operator
+      namespace: openshift-operators
+      source: community-operators
+      channel: alpha
+      disabled: true  # Already managed by validated_patterns_common role
+
+  # ArgoCD Applications to deploy
+  applications:
+    # Main self-healing-platform application
+    self-healing-platform:
+      name: self-healing-platform
+      namespace: self-healing-platform
+      project: default
+      path: charts/hub
+      repoURL: "https://gitea-with-admin-gitea.apps.cluster-fn2qb.fn2qb.sandbox1343.opentlc.com/opentlc-mgr/openshift-aiops-platform.git"
+      targetRevision: main
+      helm:
+        valueFiles:
+          - /values-global.yaml
+          - /values-hub.yaml
+          - values-notebooks-validation.yaml
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - Validate=false
+          - RespectIgnoreDifferences=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+      ignoreDifferences:
+        - group: "*"
+          kind: "*"
+          managedFieldsManagers:
+            - kube-controller-manager
+        - group: external-secrets.io
+          kind: ExternalSecret
+          jqPathExpressions:
+            - .status
+        - kind: PersistentVolumeClaim
+          jqPathExpressions:
+            - .status
+        - group: serving.kserve.io
+          kind: InferenceService
+          jqPathExpressions:
+            - .status
+
+  # ArgoCD configuration
+  argoCD:
+    # Resource exclusions - don't track ephemeral resources
+    resourceExclusions: |
+      - apiGroups:
+        - tekton.dev
+        kinds:
+        - TaskRun
+        - PipelineRun
+
+    # Custom health checks for KServe InferenceServices
+    resourceHealthChecks:
+      - group: serving.kserve.io
+        kind: InferenceService
+        check: |
+          hs = {}
+          if obj.status ~= nil then
+            if obj.status.conditions ~= nil then
+              for i, condition in pairs(obj.status.conditions) do
+                if condition.type == "Ready" then
+                  if condition.status == "True" then
+                    hs.status = "Healthy"
+                    hs.message = "InferenceService is ready"
+                  else
+                    hs.status = "Progressing"
+                    hs.message = condition.message or "Waiting for InferenceService"
+                  end
+                  return hs
+                end
+              end
+            end
+          end
+          hs.status = "Progressing"
+          hs.message = "Waiting for status"
+          return hs

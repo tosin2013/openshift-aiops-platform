@@ -1,0 +1,231 @@
+{{- /*
+  NotebookValidationJob Generator Template
+
+  Purpose: Creates NotebookValidationJob CRDs for each notebook defined in the waves
+  Integration: Jupyter Notebook Validator Operator + ArgoCD Sync Waves
+
+  Sync Wave Strategy:
+  - Wave -5 to -3: Infrastructure (ImageStream, PVC, Pipeline, PipelineRun)
+  - Wave 0-10: Notebook validation jobs (sequential based on data/model dependencies)
+
+  Reference: ADR-029, ADR-030, values-notebooks-validation.yaml
+*/ -}}
+
+{{- /* Helper to generate validation jobs for a wave */ -}}
+{{- define "notebook.validationJob" -}}
+{{- /* Generate name from path if name not provided */ -}}
+{{- $name := .notebook.name | default (base .notebook.path | trimSuffix ".ipynb" | replace "_" "-" | lower) }}
+apiVersion: mlops.mlops.dev/v1alpha1
+kind: NotebookValidationJob
+metadata:
+  name: {{ $name }}-validation
+  namespace: {{ .namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}-validation
+    app.kubernetes.io/component: notebook-validation
+    app.kubernetes.io/part-of: self-healing-platform
+    tier: {{ .notebook.tier | default "tier2" }}
+    wave: {{ .waveNum | quote }}
+  annotations:
+    {{- if .enableSyncWaves }}
+    argocd.argoproj.io/sync-wave: {{ .waveNum | quote }}
+    {{- end }}
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    notebooks.mlops.dev/path: {{ .notebook.path }}
+spec:
+  notebook:
+    git:
+      ref: {{ .gitRef }}
+      url: {{ .gitUrl }}
+    path: {{ .notebook.path }}
+  podConfig:
+    containerImage: {{ .image }}
+    resources:
+      requests:
+        memory: {{ .resources.requests.memory | default "2Gi" | quote }}
+        cpu: {{ .resources.requests.cpu | default "1000m" | quote }}
+      limits:
+        memory: {{ .resources.limits.memory | default "4Gi" | quote }}
+        cpu: {{ .resources.limits.cpu | default "2000m" | quote }}
+        {{- if and .notebook.gpuRequired (and .resources.gpu .resources.gpu.enabled) }}
+        nvidia.com/gpu: {{ .resources.gpu.count | default "1" | quote }}
+        {{- end }}
+    # Use self-healing-workbench SA for Prometheus access and other cluster permissions
+    serviceAccountName: self-healing-workbench
+    envFrom:
+    - secretRef:
+        name: model-storage-config
+    # Mount shared model storage for training output (PVC primary, S3 optional backup)
+    volumeMounts:
+    - name: model-storage
+      mountPath: /mnt/models
+    volumes:
+    - name: model-storage
+      persistentVolumeClaim:
+        claimName: model-storage-pvc
+  timeout: {{ .resources.timeout | default "15m" }}
+{{- end }}
+
+{{- if and .Values.notebooks .Values.notebooks.validation .Values.notebooks.validation.enabled }}
+{{- $root := . }}
+{{- $namespace := .Values.main.namespace | default "self-healing-platform" }}
+{{- /* Use git URL with fallback chain: git.repoURL -> global.git.repoURL -> notebooks.validation.git.url -> default */ -}}
+{{- $gitUrl := .Values.git.repoURL | default .Values.global.git.repoURL | default .Values.notebooks.validation.git.url | default "https://github.com/tosin2013/openshift-aiops-platform.git" }}
+{{- $gitRef := .Values.git.revision | default .Values.global.git.revision | default .Values.notebooks.validation.git.ref | default "main" }}
+{{- $enableSyncWaves := .Values.notebooks.validation.enableSyncWaves | default true }}
+
+{{- /* Wave 0: Setup & Platform Validation */ -}}
+{{- if and .Values.notebooks.validation.waves.wave0 .Values.notebooks.validation.waves.wave0.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave0.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "0" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 1: Data Collection */ -}}
+{{- if and .Values.notebooks.validation.waves.wave1 .Values.notebooks.validation.waves.wave1.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave1.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "1" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 2: Feature Engineering */ -}}
+{{- if and .Values.notebooks.validation.waves.wave2 .Values.notebooks.validation.waves.wave2.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave2.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "2" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 3: Anomaly Detection Models */ -}}
+{{- if and .Values.notebooks.validation.waves.wave3 .Values.notebooks.validation.waves.wave3.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave3.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "3" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 4: Ensemble Model */ -}}
+{{- if and .Values.notebooks.validation.waves.wave4 .Values.notebooks.validation.waves.wave4.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave4.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "4" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 5: Self-Healing Logic */ -}}
+{{- if and .Values.notebooks.validation.waves.wave5 .Values.notebooks.validation.waves.wave5.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave5.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "5" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 6: Model Serving */ -}}
+{{- if and .Values.notebooks.validation.waves.wave6 .Values.notebooks.validation.waves.wave6.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave6.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "6" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 7: End-to-End Scenarios */ -}}
+{{- if and .Values.notebooks.validation.waves.wave7 .Values.notebooks.validation.waves.wave7.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave7.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "7" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 8: MCP & Lightspeed Integration */ -}}
+{{- if and .Values.notebooks.validation.waves.wave8 .Values.notebooks.validation.waves.wave8.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave8.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "8" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 9: Monitoring & Operations */ -}}
+{{- if and .Values.notebooks.validation.waves.wave9 .Values.notebooks.validation.waves.wave9.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave9.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "9" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- /* Wave 10: Advanced Scenarios */ -}}
+{{- if and .Values.notebooks.validation.waves.wave10 .Values.notebooks.validation.waves.wave10.enabled }}
+{{- range $notebook := .Values.notebooks.validation.waves.wave10.notebooks }}
+{{- $tier := $notebook.tier | default "tier2" }}
+{{- $resources := index $root.Values.notebooks.validation.resources $tier }}
+{{- $image := "" }}
+{{- if eq $tier "tier1" }}{{- $image = $root.Values.notebooks.validation.images.tier1 }}
+{{- else if eq $tier "tier3" }}{{- $image = $root.Values.notebooks.validation.images.tier3 }}
+{{- else }}{{- $image = $root.Values.notebooks.validation.images.tier2 }}{{- end }}
+---
+{{ include "notebook.validationJob" (dict "notebook" $notebook "namespace" $namespace "waveNum" "10" "gitRef" $gitRef "gitUrl" $gitUrl "enableSyncWaves" $enableSyncWaves "image" $image "resources" $resources) }}
+{{- end }}
+{{- end }}
+
+{{- end }}

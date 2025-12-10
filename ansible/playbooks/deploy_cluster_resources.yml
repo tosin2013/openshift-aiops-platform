@@ -1,0 +1,54 @@
+---
+# Playbook to deploy cluster-scoped resources for namespaced ArgoCD
+# Pattern 3: Hybrid Management Model
+# - Cluster-scoped resources: Deployed via Ansible (this playbook)
+# - Namespaced resources: Deployed via ArgoCD with rbac.clusterScoped.enabled=false
+
+- name: Deploy Self-Healing Platform Cluster-Scoped Resources
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pattern_namespace: self-healing-platform
+    helm_chart_path: charts/hub
+    values_files:
+      - values-global.yaml
+      - values-hub.yaml
+
+  tasks:
+    - name: Verify cluster connectivity
+      kubernetes.core.k8s_info:
+        kind: Namespace
+        name: "{{ pattern_namespace }}"
+      register: namespace_check
+      failed_when: namespace_check.resources | length == 0
+
+    - name: Deploy cluster-scoped resources
+      include_role:
+        name: validated_patterns_deploy_cluster_resources
+      vars:
+        pattern_namespace: "{{ pattern_namespace }}"
+        deploy_cluster_resources: true
+        helm_chart_path: "{{ helm_chart_path }}"
+        values_files: "{{ values_files }}"
+        cluster_rbac:
+          enabled: true
+          external_secrets:
+            enabled: true
+          operator:
+            enabled: true
+          workbench:
+            enabled: true
+          argocd:
+            enabled: true
+        kserve:
+          enabled: true
+
+    - name: Display deployment summary
+      debug:
+        msg: |
+          ✅ Cluster-scoped resources deployment complete!
+
+          Next steps:
+          1. Ensure Helm chart has rbac.clusterScoped.enabled=false
+          2. Deploy namespaced resources via ArgoCD
+          3. Verify ArgoCD Application can sync successfully

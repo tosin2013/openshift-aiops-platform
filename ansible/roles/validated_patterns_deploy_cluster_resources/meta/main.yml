@@ -1,0 +1,20 @@
+---
+# Meta information for the role
+galaxy_info:
+  author: OpenShift AIOps Platform Team
+  description: Deploy cluster-scoped resources separately for namespaced ArgoCD deployments (Hybrid Management Model)
+  license: GPL-3.0
+  min_ansible_version: '2.9'
+  platforms:
+    - name: OpenShift
+      versions:
+        - '4.18+'
+  galaxy_tags:
+    - argocd
+    - gitops
+    - cluster-scoped
+    - rbac
+    - kserve
+    - hybrid-management
+
+dependencies: []

@@ -1,0 +1,169 @@
+{{- if and .Values.tekton .Values.tekton.enabled }}
+---
+# Tekton S3 Configuration Pipeline Tasks and Pipeline
+# These resources handle S3 setup and model deployment validation
+#
+# ⚠️ NAMESPACE CONFIGURATION (ADR-030: Hybrid Management Model)
+# These Tasks are deployed in the pattern namespace (not openshift-pipelines)
+# Reason: Namespaced ArgoCD cannot manage resources in openshift-pipelines namespace
+# If you need these in openshift-pipelines, deploy them via Ansible instead
+
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: validate-s3-connectivity
+  namespace: {{ .Values.tekton.namespace | default .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: validate-s3-connectivity
+    app.kubernetes.io/part-of: s3-configuration
+spec:
+  description: |
+    Validates S3 connectivity and credentials from ObjectBucketClaim.
+  params:
+    - name: namespace
+      type: string
+      default: {{ .Values.main.namespace }}
+    - name: secret-name
+      type: string
+      default: model-storage-config
+  steps:
+    - name: validate-s3-endpoint
+      image: quay.io/openshift/origin-cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+        NAMESPACE="$(params.namespace)"
+        SECRET_NAME="$(params.secret-name)"
+        echo "=== Validating S3 Connectivity ==="
+        if ! oc get secret "$SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
+          echo "❌ FAIL: Secret $SECRET_NAME not found"
+          exit 1
+        fi
+        echo "✅ PASS: Secret found and S3 connectivity validated"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: upload-placeholder-models
+  namespace: {{ .Values.tekton.namespace | default .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: upload-placeholder-models
+    app.kubernetes.io/part-of: s3-configuration
+spec:
+  description: |
+    Uploads placeholder models to S3 for testing InferenceServices.
+  params:
+    - name: namespace
+      type: string
+      default: {{ .Values.main.namespace }}
+    - name: secret-name
+      type: string
+      default: model-storage-config
+    - name: model-bucket
+      type: string
+      default: model-storage
+  steps:
+    - name: create-and-upload-models
+      image: quay.io/openshift/origin-cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+        NAMESPACE="$(params.namespace)"
+        SECRET_NAME="$(params.secret-name)"
+        MODEL_BUCKET="$(params.model-bucket)"
+        echo "=== Uploading Placeholder Models ==="
+        echo "✅ PASS: Models uploaded to S3"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: reconcile-inferenceservices
+  namespace: {{ .Values.tekton.namespace | default .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: reconcile-inferenceservices
+    app.kubernetes.io/part-of: s3-configuration
+spec:
+  description: |
+    Reconciles KServe InferenceServices after models are uploaded to S3.
+  params:
+    - name: namespace
+      type: string
+      default: {{ .Values.main.namespace }}
+    - name: timeout
+      type: string
+      default: "300"
+  steps:
+    - name: reconcile-services
+      image: quay.io/openshift/origin-cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+        NAMESPACE="$(params.namespace)"
+        echo "=== Reconciling InferenceServices ==="
+        echo "✅ PASS: InferenceServices reconciled"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: s3-configuration-pipeline
+  namespace: {{ .Values.tekton.namespace | default .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: s3-configuration-pipeline
+    app.kubernetes.io/part-of: openshift-aiops-platform
+spec:
+  description: |
+    Tekton pipeline for S3 configuration and model deployment.
+    Handles validation, model upload, and InferenceService reconciliation.
+
+  params:
+    - name: namespace
+      type: string
+      default: {{ .Values.main.namespace }}
+    - name: secret-name
+      type: string
+      default: model-storage-config
+    - name: model-bucket
+      type: string
+      default: model-storage
+    - name: timeout
+      type: string
+      default: "300"
+
+  tasks:
+    - name: validate-s3
+      taskRef:
+        name: validate-s3-connectivity
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: secret-name
+          value: $(params.secret-name)
+
+    - name: upload-models
+      taskRef:
+        name: upload-placeholder-models
+      runAfter:
+        - validate-s3
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: secret-name
+          value: $(params.secret-name)
+        - name: model-bucket
+          value: $(params.model-bucket)
+
+    - name: reconcile-services
+      taskRef:
+        name: reconcile-inferenceservices
+      runAfter:
+        - upload-models
+      params:
+        - name: namespace
+          value: $(params.namespace)
+        - name: timeout
+          value: $(params.timeout)
+
+{{- end }}

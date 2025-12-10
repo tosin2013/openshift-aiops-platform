@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  author: OpenShift AIOps Platform Team
+  description: Deploy and manage Jupyter Notebook Validator Operator
+  company: Red Hat
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.9"
+  platforms:
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+  galaxy_tags:
+    - openshift
+    - kubernetes
+    - operator
+    - jupyter
+    - notebook
+    - validation
+    - mlops
+
+dependencies: []

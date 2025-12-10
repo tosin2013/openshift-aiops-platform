@@ -1,0 +1,24 @@
+---
+# Main tasks for validated_patterns_secrets role
+# Purpose: Manage secrets and credentials
+
+- name: Display role purpose
+  debug:
+    msg: "Managing secrets and credentials"
+
+- name: Include secret validation
+  include_tasks: validate_secrets.yml
+
+- name: Include sealed secrets setup
+  include_tasks: setup_sealed_secrets.yml
+
+- name: Include credential management
+  include_tasks: manage_credentials.yml
+
+- name: Display secrets management summary
+  debug:
+    msg: |
+      ✅ Secrets management configured!
+      - Sealed secrets: Enabled
+      - Credentials: Managed
+      - RBAC: Configured

@@ -1,0 +1,42 @@
+---
+# Check cluster has sufficient resources
+
+- name: Get cluster nodes
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Node
+  register: cluster_nodes
+  failed_when: cluster_nodes.resources | length == 0
+
+- name: Validate minimum number of nodes
+  assert:
+    that:
+      - cluster_nodes.resources | length >= validated_patterns_min_nodes
+    fail_msg: "Cluster has {{ cluster_nodes.resources | length }} nodes, minimum required is {{ validated_patterns_min_nodes }}"
+    success_msg: "✅ Cluster has {{ cluster_nodes.resources | length }} nodes (minimum: {{ validated_patterns_min_nodes }})"
+
+- name: Check node resources
+  set_fact:
+    node_resources: "{{ cluster_nodes.resources | map(attribute='status.allocatable') | list }}"
+
+- name: Display node information
+  debug:
+    msg: |
+      Cluster Nodes:
+      {% for node in cluster_nodes.resources %}
+      - {{ node.metadata.name }}: {{ node.status.allocatable.cpu }} CPU, {{ node.status.allocatable.memory }}
+      {% endfor %}
+
+- name: Validate cluster has sufficient CPU
+  assert:
+    that:
+      - (cluster_nodes.resources | map(attribute='status.allocatable.cpu') | map('regex_replace', 'm$', '') | map('int') | sum) >= validated_patterns_min_cpu
+    fail_msg: "Cluster does not have sufficient CPU resources"
+    success_msg: "✅ Cluster has sufficient CPU resources"
+
+- name: Validate cluster has sufficient memory
+  assert:
+    that:
+      - (cluster_nodes.resources | map(attribute='status.allocatable.memory') | map('regex_replace', 'Ki$', '') | map('int') | sum) >= (validated_patterns_min_memory * 1024 * 1024)
+    fail_msg: "Cluster does not have sufficient memory resources"
+    success_msg: "✅ Cluster has sufficient memory resources"
