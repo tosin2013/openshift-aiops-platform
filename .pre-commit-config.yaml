@@ -84,8 +84,14 @@ repos:
       - id: end-of-file-fixer
         name: Fix end of files
 
+# Configuration for running hooks on push (in addition to commit)
+default_stages: [commit, push]
+
 # Setup instructions:
 # 1. Install pre-commit: pip install pre-commit
-# 2. Install hooks: pre-commit install
-# 3. Generate secrets baseline: detect-secrets scan --baseline .secrets.baseline
-# 4. Test: pre-commit run --all-files
+# 2. Install commit hooks: pre-commit install
+# 3. Install push hooks: pre-commit install --hook-type pre-push
+# 4. Generate secrets baseline: detect-secrets scan --baseline .secrets.baseline
+# 5. Test: pre-commit run --all-files
+#
+# Now hooks will run on BOTH 'git commit' AND 'git push'!
