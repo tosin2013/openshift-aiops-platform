@@ -200,21 +200,20 @@ validate-prereq: ## verify pre-requisites
 	@if [ ! -f /run/.containerenv ]; then\
 	  echo "Checking prerequisites:";\
 	  echo -n "  Check for python-kubernetes: ";\
-	  if ! python3 -c 'import kubernetes' 2>/dev/null; then echo "Not found"; exit 1; fi;\
+	  if ! ansible -m ansible.builtin.command -a "{{ ansible_python_interpreter }} -c 'import kubernetes'" localhost > /dev/null 2>&1; then echo "Not found"; exit 1; fi;\
 	  echo "OK";\
 	  echo -n "  Check for kubernetes.core collection: ";\
 	  if ! ansible-galaxy collection list | grep kubernetes.core > /dev/null 2>&1; then echo "Not found"; exit 1; fi;\
 	  echo "OK";\
 	else\
-	  echo "Running in execution environment - prerequisites validated during EE build";\
-	  if [ -f values-global.yaml ]; then\
-	    OUT=`yq -r '.main.multiSourceConfig.enabled // (.main.multiSourceConfig.enabled = "false")' values-global.yaml`;\
-	    if [ "$${OUT,,}" = "false" ]; then\
-	      echo "You must set \".main.multiSourceConfig.enabled: true\" in your 'values-global.yaml' file";\
-	      echo "because your common subfolder is the slimmed down version with no helm charts in it";\
-	      exit 1;\
-	    fi;\
-	  fi;\
+		if [ -f values-global.yaml ]; then\
+			OUT=`yq -r '.main.multiSourceConfig.enabled // (.main.multiSourceConfig.enabled = "false")' values-global.yaml`;\
+			if [ "$${OUT,,}" = "false" ]; then\
+				echo "You must set \".main.multiSourceConfig.enabled: true\" in your 'values-global.yaml' file";\
+				echo "because your common subfolder is the slimmed down version with no helm charts in it";\
+				exit 1;\
+			fi;\
+		fi;\
 	fi
 
 .PHONY: argo-healthcheck
