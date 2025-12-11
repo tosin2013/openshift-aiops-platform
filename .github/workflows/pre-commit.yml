@@ -1,0 +1,145 @@
+name: Pre-commit Checks
+
+on:
+  push:
+    branches: ['main', 'develop']
+  pull_request:
+    branches: ['main', 'develop']
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    name: Run Pre-commit Hooks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for all branches and tags
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install pre-commit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pre-commit
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
+
+      - name: Run pre-commit on all files
+        run: |
+          pre-commit run --all-files --show-diff-on-failure
+
+      - name: Check for secrets in commit history
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "🔍 Scanning commit history for secrets..."
+          pre-commit run detect-secrets --all-files
+
+      - name: Report results
+        if: always()
+        run: |
+          echo "✅ Pre-commit checks completed"
+          echo "📊 Checked files for:"
+          echo "  - Secrets detection"
+          echo "  - Large files (>500KB)"
+          echo "  - Merge conflicts"
+          echo "  - YAML syntax"
+          echo "  - JSON syntax"
+          echo "  - Trailing whitespace"
+          echo "  - End of file fixes"
+
+      - name: Comment on PR (on failure)
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ⚠️ Pre-commit Checks Failed
+
+              The pre-commit hooks detected issues with this PR. Please run the following locally to fix:
+
+              \`\`\`bash
+              # Install pre-commit if not already installed
+              pip install pre-commit
+              pre-commit install
+
+              # Run checks on all files
+              pre-commit run --all-files
+
+              # Fix any issues, then commit and push
+              git add .
+              git commit -m "fix: resolve pre-commit issues"
+              git push
+              \`\`\`
+
+              **Common issues:**
+              - 🔐 Secrets detected (remove and use environment variables)
+              - 📦 Large files (>500KB) - use Git LFS or external storage
+              - 🔀 Merge conflicts - resolve conflicts before pushing
+              - 📝 Trailing whitespace or missing newlines
+
+              See the [Actions tab](${context.payload.repository.html_url}/actions/runs/${context.runId}) for details.`
+            })
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: pre-commit
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+        continue-on-error: true
+
+      - name: Report security scan results
+        if: always()
+        run: |
+          echo "🔒 Security scan completed"
+          echo "Scanned for:"
+          echo "  - Hardcoded credentials"
+          echo "  - API keys and tokens"
+          echo "  - Private keys"
+          echo "  - Connection strings"
+
+  lint-status:
+    name: Lint Status Check
+    runs-on: ubuntu-latest
+    needs: [pre-commit, security-scan]
+    if: always()
+
+    steps:
+      - name: Check job statuses
+        run: |
+          if [ "${{ needs.pre-commit.result }}" != "success" ]; then
+            echo "❌ Pre-commit checks failed"
+            exit 1
+          fi
+          if [ "${{ needs.security-scan.result }}" == "failure" ]; then
+            echo "⚠️ Security scan found issues (non-blocking)"
+          fi
+          echo "✅ All required checks passed"
