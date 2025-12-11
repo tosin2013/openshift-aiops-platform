@@ -29,6 +29,11 @@ main:
   gitOpsOperator: openshift-gitops
   namespace: self-healing-platform
 
+# Cluster-scoped RBAC managed externally (by Ansible)
+# Set to true to prevent ArgoCD from trying to manage ClusterRole/ClusterRoleBinding
+# These are created by ansible/roles/validated_patterns_deploy_cluster_resources
+clusterRbacManagedExternally: true
+
 # Namespace configuration
 namespace:
   create: false  # Namespace already exists

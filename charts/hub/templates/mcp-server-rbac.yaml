@@ -1,6 +1,9 @@
 {{- if .Values.mcpServer.enabled }}
+{{- if not .Values.clusterRbacManagedExternally }}
 ---
 # ClusterRole for MCP Server - Read-only cluster-wide access
+# NOTE: This is managed by Ansible in production (see ansible/roles/validated_patterns_deploy_cluster_resources)
+# Set clusterRbacManagedExternally: true to skip rendering this resource
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -104,9 +107,12 @@ rules:
       - get
       - list
       - watch
+{{- end }}
 
+{{- if not .Values.clusterRbacManagedExternally }}
 ---
 # ClusterRoleBinding for MCP Server ServiceAccount
+# NOTE: This is managed by Ansible in production (see ansible/roles/validated_patterns_deploy_cluster_resources)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -122,6 +128,7 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.mcpServer.serviceAccount.name | default "self-healing-operator" }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
 
 ---
 # ServiceAccount for MCP Server (if not using existing)
@@ -135,10 +142,11 @@ metadata:
     {{- include "self-healing-platform.labels" . | nindent 4 }}
     app.kubernetes.io/component: mcp-server
 {{- end }}
-{{- end }}
-# Add this to charts/hub/templates/mcp-server-rbac.yaml
+
+{{- if not .Values.clusterRbacManagedExternally }}
 ---
 # ClusterRoleBinding for Prometheus monitoring access
+# NOTE: This is managed by Ansible in production (see ansible/roles/validated_patterns_deploy_cluster_resources)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -154,3 +162,5 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.mcpServer.serviceAccount.name | default "self-healing-operator" }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}
