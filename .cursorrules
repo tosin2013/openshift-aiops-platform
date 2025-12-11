@@ -153,8 +153,13 @@ If CI fails, the PR cannot be merged.
 
 **This is NOT optional.** All contributors MUST:
 - Install pre-commit: `pip install pre-commit`
-- Install hooks: `pre-commit install`
+- Install commit hooks: `pre-commit install`
+- Install push hooks: `pre-commit install --hook-type pre-push`
 - Run checks before push: `pre-commit run --all-files`
+
+**With pre-push hooks installed, checks will run automatically on both:**
+- ✅ `git commit` - Validates before committing
+- ✅ `git push` - Validates before pushing (prevents pushing bad commits)
 
 **PRs with secrets will be rejected immediately.**
 
