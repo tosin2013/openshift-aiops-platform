@@ -81,7 +81,7 @@ clusterGroup:
         valueFiles:
           - /values-global.yaml
           - /values-hub.yaml
-          - /charts/hub/values-notebooks-validation.yaml
+          - charts/hub/values-notebooks-validation.yaml
       syncPolicy:
         automated:
           prune: true
