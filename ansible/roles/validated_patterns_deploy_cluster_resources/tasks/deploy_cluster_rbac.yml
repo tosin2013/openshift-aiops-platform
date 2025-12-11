@@ -135,7 +135,7 @@
           app.kubernetes.io/managed-by: ansible
       rules:
         - apiGroups: [""]
-          resources: ["secrets"]
+          resources: ["secrets"]  # pragma: allowlist secret
           verbs: ["get", "list", "watch"]
         - apiGroups: [""]
           resources: ["configmaps"]
@@ -201,6 +201,161 @@
         namespace: "{{ pattern_namespace }}-hub"
   when: deploy_cluster_rbac | default(true) | bool
 
+# ==============================================================================
+# MCP Server ClusterRole
+# ==============================================================================
+
+- name: Deploy MCP Server ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: self-healing-platform-mcp-server-cluster
+        labels:
+          app.kubernetes.io/component: mcp-server
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      rules:
+        # Core Kubernetes resources (read-only)
+        - apiGroups: [""]
+          resources: [nodes, pods, events, namespaces, persistentvolumes, services, configmaps]
+          verbs: [get, list, watch]
+        # Apps resources (read-only)
+        - apiGroups: ["apps"]
+          resources: [deployments, statefulsets, daemonsets, replicasets]
+          verbs: [get, list, watch]
+        # Batch resources (read-only)
+        - apiGroups: ["batch"]
+          resources: [jobs, cronjobs]
+          verbs: [get, list, watch]
+        # Storage resources (read-only)
+        - apiGroups: ["storage.k8s.io"]
+          resources: [storageclasses, volumeattachments]
+          verbs: [get, list, watch]
+        # Custom Resource Definitions (read-only)
+        - apiGroups: ["apiextensions.k8s.io"]
+          resources: [customresourcedefinitions]
+          verbs: [get, list, watch]
+        # OpenShift-specific resources (read-only)
+        - apiGroups: ["route.openshift.io"]
+          resources: [routes]
+          verbs: [get, list, watch]
+        # Monitoring resources (read-only)
+        - apiGroups: ["monitoring.coreos.com"]
+          resources: [servicemonitors, prometheusrules]
+          verbs: [get, list, watch]
+        # KServe InferenceServices (read-only)
+        - apiGroups: ["serving.kserve.io"]
+          resources: [inferenceservices]
+          verbs: [get, list, watch]
+        # Knative Serving (read-only)
+        - apiGroups: ["serving.knative.dev"]
+          resources: [services, routes, configurations, revisions]
+          verbs: [get, list, watch]
+  when: deploy_cluster_rbac | default(true) | bool
+
+- name: Deploy MCP Server ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: self-healing-platform-mcp-server-cluster
+        labels:
+          app.kubernetes.io/component: mcp-server
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: self-healing-platform-mcp-server-cluster
+      subjects:
+        - kind: ServiceAccount
+          name: self-healing-operator
+          namespace: "{{ pattern_namespace }}"
+  when: deploy_cluster_rbac | default(true) | bool
+
+- name: Deploy MCP Prometheus ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: self-healing-platform-mcp-prometheus
+        labels:
+          app.kubernetes.io/component: mcp-server
+          app.kubernetes.io/name: self-healing-platform
+          app.kubernetes.io/managed-by: ansible
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-monitoring-view
+      subjects:
+        - kind: ServiceAccount
+          name: self-healing-operator
+          namespace: "{{ pattern_namespace }}"
+  when: deploy_cluster_rbac | default(true) | bool
+
+# ==============================================================================
+# Jupyter Notebook Validator Operator ClusterRole
+# ==============================================================================
+
+- name: Deploy Jupyter Notebook Validator Operator ClusterRole
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: jupyter-notebook-validator-operator
+        labels:
+          app.kubernetes.io/name: jupyter-notebook-validator
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/managed-by: ansible
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "pods/log", "pods/exec", "serviceaccounts"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: [""]
+          resources: ["secrets", "configmaps"]  # pragma: allowlist secret
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["batch"]
+          resources: ["jobs"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["mlops.mlops.dev"]
+          resources: ["notebookvalidationjobs", "notebookvalidationjobs/status", "notebookvalidationjobs/finalizers"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: [""]
+          resources: ["events"]
+          verbs: ["create", "patch"]
+  when: deploy_cluster_rbac | default(true) | bool
+
+- name: Deploy Jupyter Notebook Validator Operator ClusterRoleBinding
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: jupyter-notebook-validator-operator
+        labels:
+          app.kubernetes.io/name: jupyter-notebook-validator
+          app.kubernetes.io/component: rbac
+          app.kubernetes.io/managed-by: ansible
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: jupyter-notebook-validator-operator
+      subjects:
+        - kind: ServiceAccount
+          name: jupyter-notebook-validator-operator
+          namespace: jupyter-notebook-validator-system
+  when: deploy_cluster_rbac | default(true) | bool
+
 - name: Display cluster RBAC deployment status  # pragma: allowlist secret
   debug:
     msg: |
@@ -212,10 +367,18 @@
       - ClusterRole: external-secrets-{{ pattern_namespace }} (if ESO enabled)  # pragma: allowlist secret
       - ClusterRoleBinding: external-secrets-{{ pattern_namespace }} (if ESO enabled)  # pragma: allowlist secret
       - ClusterRoleBinding: hub-gitops-argocd-application-controller-cluster-admin
+      - ClusterRole: self-healing-platform-mcp-server-cluster
+      - ClusterRoleBinding: self-healing-platform-mcp-server-cluster
+      - ClusterRoleBinding: self-healing-platform-mcp-prometheus
+      - ClusterRole: jupyter-notebook-validator-operator
+      - ClusterRoleBinding: jupyter-notebook-validator-operator
 
       These allow:
       - Operator: Access to cluster-scoped resources (namespaces, nodes, CRDs)
       - Workbench: Access to cluster-scoped resources for monitoring
       - Workbench: Access to Prometheus metrics via cluster-monitoring-view role
-      - External Secrets: Access to secrets and configmaps cluster-wide
+      - External Secrets: Access to secrets and configmaps cluster-wide  # pragma: allowlist secret
       - Hub-GitOps ArgoCD: Manage cluster-scoped resources from namespaced mode (ADR-030)
+      - MCP Server: Read-only cluster-wide access for monitoring and diagnostics
+      - MCP Server: Prometheus metrics access
+      - Jupyter Notebook Validator: Manage NotebookValidationJob CRs and pods
