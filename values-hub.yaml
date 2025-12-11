@@ -39,6 +39,14 @@ clusterRbacManagedExternally: true
 # These are created as prereqs by ansible/roles/validated_patterns_deploy_cluster_resources
 namespacedRbacManagedExternally: true
 
+# Image builds configuration
+imageBuilds:
+  enabled: true
+  gitRepository: "https://github.com/tosin2013/openshift-aiops-platform.git"
+  gitRef: "main"
+  gitCredentialsSecret: "git-credentials-source"  # pragma: allowlist secret
+  baseImage: "registry.redhat.io/ubi8/python-39:latest"
+
 # Namespace configuration
 namespace:
   create: false  # Namespace already exists
