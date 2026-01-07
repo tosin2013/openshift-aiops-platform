@@ -24,8 +24,7 @@ spec:
       serviceAccountName: {{ .Values.mcpServer.serviceAccount.name | default "self-healing-operator" }}
       securityContext:
         runAsNonRoot: true
-        runAsUser: 65532  # nonroot user from distroless
-        fsGroup: 65532
+        # Let OpenShift assign UID/GID from allowed range (no hardcoded values)
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -91,7 +90,7 @@ spec:
             - ALL
           readOnlyRootFilesystem: true
           runAsNonRoot: true
-          runAsUser: 65532
+          # Let OpenShift assign UID from allowed range
 ---
 apiVersion: v1
 kind: Service
