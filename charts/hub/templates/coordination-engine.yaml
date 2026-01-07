@@ -51,10 +51,10 @@ spec:
           value: "true"
         - name: KSERVE_NAMESPACE
           value: {{ .Values.coordinationEngine.kserve.namespace | default .Release.Namespace | quote }}
-        - name: KSERVE_ANOMALY_DETECTOR_SERVICE
-          value: {{ .Values.coordinationEngine.kserve.services.anomaly_detector | default "anomaly-detector-predictor" | quote }}
-        - name: KSERVE_PREDICTIVE_ANALYTICS_SERVICE
-          value: {{ .Values.coordinationEngine.kserve.services.predictive_analytics | default "predictive-analytics-predictor" | quote }}
+        {{- range $key, $value := .Values.coordinationEngine.kserve.services }}
+        - name: KSERVE_{{ $key | upper }}_SERVICE
+          value: {{ $value | quote }}
+        {{- end }}
         {{- end }}
         livenessProbe:
           httpGet:
