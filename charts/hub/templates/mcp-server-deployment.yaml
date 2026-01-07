@@ -45,14 +45,20 @@ spec:
         - name: LOG_LEVEL
           value: {{ .Values.mcpServer.logLevel | default "info" | quote }}
         {{- if .Values.mcpServer.coordinationEngine.enabled }}
+        - name: ENABLE_COORDINATION_ENGINE
+          value: "true"
         - name: COORDINATION_ENGINE_URL
           value: {{ .Values.mcpServer.coordinationEngine.url | default "http://coordination-engine:8080" | quote }}
         {{- end }}
         {{- if .Values.mcpServer.kserve.enabled }}
+        - name: ENABLE_KSERVE
+          value: "true"
         - name: KSERVE_NAMESPACE
           value: {{ .Values.mcpServer.kserve.namespace | default .Release.Namespace | quote }}
         {{- end }}
         {{- if .Values.mcpServer.prometheus.enabled }}
+        - name: ENABLE_PROMETHEUS
+          value: "true"
         - name: PROMETHEUS_URL
           value: {{ .Values.mcpServer.prometheus.url | default "https://prometheus-k8s.openshift-monitoring.svc:9091" | quote }}
         {{- end }}
