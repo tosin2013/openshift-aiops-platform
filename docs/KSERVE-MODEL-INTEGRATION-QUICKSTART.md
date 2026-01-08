@@ -169,8 +169,30 @@ client = CoordinationEngineClient(
 Set `COORDINATION_ENGINE_URL` to override the default URL:
 
 ```bash
-export COORDINATION_ENGINE_URL=http://coordination-engine.self-healing-platform.svc:8080
+# In-cluster (recommended for notebooks):
+export COORDINATION_ENGINE_URL=http://coordination-engine:8080
+
+# External access via port-forward:
+# oc port-forward -n self-healing-platform svc/coordination-engine 8080:8080
+# export COORDINATION_ENGINE_URL=http://localhost:8080
+
+# Cross-namespace access (if needed):
+# export COORDINATION_ENGINE_URL=http://coordination-engine.self-healing-platform.svc:8080
 ```
+
+### URL Patterns
+
+The coordination engine client supports different URL patterns for different access scenarios:
+
+| Scenario | URL Pattern | Example |
+|----------|-------------|---------|
+| **In-cluster** (notebooks, services) | `http://<service>:<port>` | `http://coordination-engine:8080` |
+| **External** (laptop, local dev) | `http://localhost:<port>` | `http://localhost:8080` |
+| **Cross-namespace** | `http://<service>.<namespace>.svc:<port>` | `http://coordination-engine.self-healing-platform.svc:8080` |
+
+**Default**: The `coordination_engine_client.py` defaults to `http://coordination-engine:8080` for in-cluster access.
+
+**Override**: Set `COORDINATION_ENGINE_URL` environment variable to use a different URL.
 
 ---
 
@@ -243,4 +265,5 @@ notebooks/00-setup/01-kserve-model-onboarding.ipynb
 - [ADR-040: Extensible KServe Model Registry](./adrs/040-extensible-kserve-model-registry.md)
 - [Coordination Engine Repository](https://github.com/tosin2013/openshift-coordination-engine)
 - [KServe v1 Protocol](https://kserve.github.io/website/latest/modelserving/data_plane/v1_protocol/)
+
 
