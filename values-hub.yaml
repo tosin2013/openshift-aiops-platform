@@ -469,6 +469,8 @@ notebooks:
         cpu: "500m"
 
 # MCP Server Configuration
+
+# MCP Server Configuration
 mcpServer:
   enabled: true
   image:
@@ -479,13 +481,9 @@ mcpServer:
   route:
     enabled: true
     host: ""
-    tls:
-      enabled: true
-      termination: edge
   service:
     type: ClusterIP
     port: 8080
-    targetPort: 8080
   resources:
     requests:
       memory: "256Mi"
@@ -493,6 +491,12 @@ mcpServer:
     limits:
       memory: "512Mi"
       cpu: "500m"
-  env: []
-  volumeMounts: []
-  volumes: []
+  coordinationEngine:
+    enabled: true
+    url: "http://coordination-engine.self-healing-platform.svc.cluster.local:8080"
+  prometheus:
+    enabled: true
+    url: "http://prometheus-k8s.openshift-monitoring.svc:9090"
+  serviceAccount:
+    create: true
+    name: mcp-server
