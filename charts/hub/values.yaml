@@ -153,57 +153,6 @@ nodeConfig:
         value: "true"
         effect: NoSchedule
 
-# Coordination Engine configuration
-coordinationEngine:
-  # Enable coordination engine
-  enabled: true
-
-  # Deployment name
-  name: coordination-engine
-
-  # Replica count
-  replicas: 1
-
-  # Image configuration
-  image:
-    repository: registry.redhat.io/ubi8/python-39
-    tag: latest
-    pullPolicy: IfNotPresent
-
-  # Resource requests and limits
-  resources:
-    requests:
-      cpu: 500m
-      memory: 1Gi
-    limits:
-      cpu: 2
-      memory: 4Gi
-
-  # Port configuration
-  port: 8080
-
-  # Environment variables
-  env:
-    LOG_LEVEL: INFO
-    METRICS_PORT: "8090"
-    COORDINATION_ENGINE_PORT: "8080"
-    MODEL_SERVING_TIMEOUT: "30s"
-
-  # KServe InferenceService integration
-  kserve:
-    enabled: true
-    namespace: self-healing-platform
-    services:
-      anomaly-detector:
-        url: "http://anomaly-detector-predictor-default.self-healing-platform.svc.cluster.local"
-        modelFormat: sklearn
-        healthPath: "/v1/models/anomaly-detector"
-      predictive-analytics:
-        url: "http://predictive-analytics-predictor-default.self-healing-platform.svc.cluster.local"
-        modelFormat: sklearn
-        healthPath: "/v1/models/predictive-analytics"
-    timeout: "30s"
-
 # Object Store configuration (OpenShift Data Foundation / NooBaa)
 objectStore:
   # Enable object store integration

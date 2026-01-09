@@ -188,10 +188,6 @@ pre-commit install
 ### Testing
 
 ```bash
-# Unit tests (Python)
-cd src/coordination-engine
-pytest
-
 # Notebook validation
 cd notebooks
 jupyter nbconvert --to notebook --execute 00-setup/00-platform-readiness-validation.ipynb
@@ -235,8 +231,7 @@ openshift-aiops-platform/
 │   ├── 03-self-healing-logic/  # Integration
 │   ├── 04-model-serving/       # KServe deployment
 │   └── 05-end-to-end-scenarios/# Complete use cases
-├── src/                        # Source code
-│   └── coordination-engine/    # Python Flask REST API
+├── src/                        # Source code (models, utilities)
 ├── tekton/                     # CI/CD pipelines (26 validation checks)
 ├── tests/                      # Test suites
 ├── Makefile                    # Main build/deploy/test targets
@@ -288,7 +283,7 @@ We welcome contributions! Here's how you can help:
 1. 🐛 **Report Bugs**: [Open an issue](https://github.com/tosin2013/openshift-aiops-platform/issues/new)
 2. 💡 **Suggest Features**: [Feature request](https://github.com/tosin2013/openshift-aiops-platform/issues/new)
 3. 📝 **Improve Docs**: Fix typos, add examples, clarify instructions
-4. 🧪 **Add Tests**: Expand test coverage for notebooks, coordination engine
+4. 🧪 **Add Tests**: Expand test coverage for notebooks and models
 5. 🚀 **Submit PRs**: Fix bugs, add features, improve performance
 
 ### Contribution Guidelines
@@ -308,7 +303,7 @@ We welcome contributions! Here's how you can help:
 
 Examples:
 feat(notebooks): add LSTM autoencoder anomaly detection
-fix(coordination-engine): resolve conflict resolution race condition
+fix(kserve): resolve model loading race condition
 docs(adr): add ADR-038 for deployment validation strategy
 chore(ci): update GitHub Actions to v4
 ```
@@ -367,10 +362,6 @@ We use GitHub Actions for continuous integration:
 # Pre-commit checks (runs all linters)
 pre-commit run --all-files
 
-# Python unit tests (coordination engine)
-cd src/coordination-engine
-pytest tests/
-
 # Notebook validation (executes notebooks)
 cd notebooks
 jupyter nbconvert --to notebook --execute \
@@ -413,14 +404,16 @@ oc describe notebook self-healing-workbench -n self-healing-platform
 **Issue: Coordination engine not responding**
 
 ```bash
-# Check pod status
-oc get pods -n self-healing-platform | grep coordination-engine
+# Check pod status (Go-based coordination engine from external repo)
+oc get pods -n self-healing-platform -l app.kubernetes.io/component=coordination-engine
 
 # View logs
-oc logs -n self-healing-platform <coordination-engine-pod> --tail=100
+oc logs -n self-healing-platform -l app.kubernetes.io/component=coordination-engine --tail=100
 
 # Test health endpoint
 curl http://coordination-engine.self-healing-platform.svc.cluster.local:8080/health
+
+# Note: Coordination engine is from https://github.com/tosin2013/openshift-coordination-engine
 ```
 
 **📖 Complete Troubleshooting Guide**: See [docs/guides/TROUBLESHOOTING-GUIDE.md](docs/guides/TROUBLESHOOTING-GUIDE.md) for comprehensive issue resolution
