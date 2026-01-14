@@ -1,16 +1,68 @@
-# GitHub Issues for Prediction & Capacity Planning Features
+# GitHub Issues for OpenShift AI Ops Platform
 
-This directory contains GitHub issue templates for implementing prediction and capacity planning features across the OpenShift AI Ops platform.
+This directory contains GitHub issue templates for implementing features and fixing bugs across the OpenShift AI Ops platform.
 
 ## Overview
 
-These features enable OpenShift Lightspeed to answer natural language questions about:
-- **Time-specific predictions**: "What will CPU be at 3 PM?"
-- **Scaling impact**: "If I scale to 5 replicas, what happens?"
-- **Capacity planning**: "How many more pods can I run?"
+These issues cover:
+- **Bug Fixes**: Critical bugs blocking end-to-end self-healing demo
+- **Feature Engineering**: ML model integration with MCP server and coordination engine
+- **Prediction Tools**: Time-specific predictions, capacity planning, scaling analysis
 - **Infrastructure monitoring**: Works for any pod (applications + OpenShift infrastructure)
 
-## Issue Templates
+---
+
+## 🔴 Critical Bug Fixes (Blocking E2E Demo)
+
+These issues must be fixed before the end-to-end self-healing demo works:
+
+### 1. MCP Server: KServe URL Bug
+**File**: [`mcp-server-kserve-url-bug.md`](./mcp-server-kserve-url-bug.md)
+- **Problem**: KServe client uses model name instead of literal "model" in URL path
+- **Impact**: 404 errors when calling ML models
+- **Fix**: Change URL from `.../models/{modelName}:predict` to `.../models/model:predict`
+- **Priority**: 🔴 **Critical**
+
+### 2. MCP Server: Feature Engineering Missing
+**File**: [`mcp-server-anomaly-detection-feature-engineering.md`](./mcp-server-anomaly-detection-feature-engineering.md)
+- **Problem**: Sends metadata instead of 45 numeric features to anomaly-detector model
+- **Impact**: Model receives wrong input format, returns errors
+- **Fix**: Implement Prometheus queries + feature engineering in MCP server or coordination engine
+- **Priority**: 🔴 **Critical**
+
+### 3. Coordination Engine: Add Anomaly Analysis Endpoint
+**File**: [`coordination-engine-anomaly-analysis-endpoint.md`](./coordination-engine-anomaly-analysis-endpoint.md)
+- **Problem**: No centralized endpoint for anomaly analysis with feature engineering
+- **Impact**: MCP server cannot properly call ML models
+- **Fix**: Add `/api/v1/anomalies/analyze` endpoint with feature engineering
+- **Priority**: 🔴 **Critical**
+
+### 4. Coordination Engine: Flexible Model Response Parsing ⭐ NEW
+**File**: [`coordination-engine-flexible-model-response-parsing.md`](./coordination-engine-flexible-model-response-parsing.md)
+- **Problem**: Cannot use custom sklearn wrappers (pickle class not available at inference)
+- **Root Cause**: KServe sklearn runtime doesn't have custom class definitions
+- **Impact**: Models must output nested format manually or coordination engine must handle array format
+- **Fix**: Update `parseForecastResponse()` to handle both nested and array formats
+- **Priority**: 🔴 **Critical** (Blocking E2E demo)
+
+### 5. Coordination Engine: Type Mismatch Bug (Superseded by #4)
+**File**: [`coordination-engine-prediction-type-mismatch.md`](./coordination-engine-prediction-type-mismatch.md)
+- **Problem**: Cannot parse model response - expects int, gets dict
+- **Impact**: Prediction API returns 503 errors
+- **Fix**: Update Go struct to handle both int and dict response types
+- **Note**: Issue #4 provides a more comprehensive fix that includes this
+- **Priority**: 🟠 **High**
+
+### 6. MCP Server: Tool Default Behavior
+**File**: [`mcp-server-tool-default-behavior.md`](./mcp-server-tool-default-behavior.md)
+- **Problem**: LLM asks clarifying questions instead of using defaults
+- **Impact**: Poor user experience, requires extra interaction
+- **Fix**: Update tool description to guide LLM to use defaults
+- **Priority**: 🟡 **Medium**
+
+---
+
+## Issue Templates (Features)
 
 ### openshift-cluster-health-mcp (4 issues)
 
@@ -254,6 +306,31 @@ Coordination Engine Issues:
 - [ ] 100+ end-to-end tests passing
 - [ ] Documentation complete
 - [ ] Production deployment successful
+
+## Bug Fix Priority Order
+
+For the end-to-end self-healing demo to work, fix in this order:
+
+```
+1. MCP Server: KServe URL Bug (quick fix - 1 line change)
+   └── Enables: Model calls to succeed
+   
+2. Coordination Engine: Flexible Model Response Parsing ⭐ NEW
+   └── Enables: Handle both array [[cpu,mem]] and nested {cpu_usage:...} formats
+   └── Root Cause: Pickle requires class definitions at deserialization (KServe doesn't have custom classes)
+   └── Supersedes: Type Mismatch Bug (provides comprehensive fix)
+   
+3. Coordination Engine: Add Anomaly Analysis Endpoint (medium effort)
+   └── Enables: Centralized feature engineering for anomaly detection
+   └── Depends on: #1, #2 working
+   
+4. MCP Server: Update to call Coordination Engine (small change)
+   └── Enables: End-to-end anomaly detection flow
+   └── Depends on: #3 working
+   
+5. MCP Server: Tool Default Behavior (enhancement)
+   └── Improves: User experience with default parameters
+```
 
 ## Questions or Issues?
 
