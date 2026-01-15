@@ -103,6 +103,7 @@ giteuserpass.md
 
 # ⚠️ SECURITY: Ansible configuration with embedded tokens
 ansible.cfg.local
+ansible.cfg
 **/ansible.cfg.local
 context/_build/configs/ansible.cfg
 
