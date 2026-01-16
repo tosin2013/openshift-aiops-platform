@@ -18,5 +18,6 @@ rules:
 ignore: |
   charts/**/templates/**/*.yaml
   charts/**/templates/**/*.tpl
+  charts/**/templates/**/**/*.yaml
   .secrets.baseline
   reference/
