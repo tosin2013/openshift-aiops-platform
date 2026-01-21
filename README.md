@@ -89,6 +89,35 @@ source ~/.bashrc
 
 > **💡 Fedora/CentOS Stream**: The script may work on Fedora and CentOS Stream 9+ but is tested on RHEL.
 
+### Cluster Infrastructure Setup (Optional)
+
+If your cluster needs additional worker nodes or OpenShift Data Foundation (ODF) storage, run the infrastructure configuration script:
+
+```bash
+# Ensure you're logged into your OpenShift cluster
+oc login <cluster-api-url>
+
+# Configure cluster infrastructure (adds workers, installs ODF)
+./scripts/configure-cluster-infrastructure.sh
+
+# Or with options:
+./scripts/configure-cluster-infrastructure.sh --min-workers 3 --odf-storage-size 512Gi
+
+# Dry run to see what would be done:
+./scripts/configure-cluster-infrastructure.sh --dry-run
+```
+
+**What the script does:**
+- Detects cluster infrastructure (AWS IPI)
+- Scales MachineSets to ensure minimum worker nodes (default: 3)
+- Installs OpenShift Data Foundation (ODF) operator
+- Creates StorageSystem and StorageCluster for persistent storage
+- Labels nodes for ODF and validates storage classes
+
+> **⚠️ Note**: ODF installation takes 10-15 minutes. The script will wait for completion.
+
+> **💡 Skip ODF**: If you already have storage configured, use `--skip-odf`
+
 ### Installation
 
 #### Option 1: Fork and Deploy (Recommended for Development)

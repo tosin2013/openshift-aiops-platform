@@ -92,6 +92,11 @@ install-prereqs-local: ## Install local workstation prerequisites (RHEL 9/10)
 	@echo "Installing local workstation prerequisites..."
 	@./scripts/install-prerequisites-rhel.sh
 
+.PHONY: configure-cluster
+configure-cluster: ## Configure cluster infrastructure (scale nodes, install ODF)
+	@echo "Configuring cluster infrastructure..."
+	@./scripts/configure-cluster-infrastructure.sh
+
 .PHONY: install
 install: operator-deploy load-secrets validate-deployment ## Install the pattern (deploy + load secrets + validate)
 
