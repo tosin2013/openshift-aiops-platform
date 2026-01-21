@@ -46,10 +46,48 @@ See the **[User Model Deployment Guide](docs/guides/USER-MODEL-DEPLOYMENT-GUIDE.
 
 ### Prerequisites
 
+**Cluster Requirements:**
 - OpenShift 4.18+ cluster (admin access)
-- `oc` CLI, `helm`, `ansible-navigator`
-- Red Hat Ansible Automation Hub token ([get one here](https://console.redhat.com/ansible/automation-hub/token))
 - 6+ nodes (3 control-plane, 3+ workers, 1 GPU-enabled recommended)
+- 24+ CPU cores, 96+ GB RAM, 500+ GB storage
+
+**Local Workstation Tools:**
+- `podman` - Container runtime for building execution environments
+- `oc` and `kubectl` - OpenShift/Kubernetes CLI
+- `helm` 3.12+ - Kubernetes package manager
+- `ansible-navigator` - Ansible execution environment runner
+- `ansible-builder` - Build custom Ansible execution environments
+- `yq` - YAML processor
+- `tkn` - Tekton CLI (optional, for pipeline management)
+- `git`, `make`, `jq` - Standard development tools
+
+**Credentials:**
+- Red Hat Ansible Automation Hub token ([get one here](https://console.redhat.com/ansible/automation-hub/token))
+
+### RHEL 9/10 Workstation Setup (One-Time)
+
+If you're running **RHEL 9** or **RHEL 10**, run the prerequisites installer script to set up all required tools:
+
+```bash
+# Clone the repository first
+git clone https://github.com/tosin2013/openshift-aiops-platform.git
+cd openshift-aiops-platform
+
+# Run the prerequisites installer (requires sudo)
+./scripts/install-prerequisites-rhel.sh
+
+# Start a new terminal or source your shell config
+source ~/.bashrc
+```
+
+**What the script installs:**
+- System packages via `dnf` (podman, git, make, jq, python3-pip, development headers)
+- Python virtual environment at `~/.venv/aiops-platform` with ansible-navigator, ansible-builder
+- CLI tools: `oc`, `kubectl`, `helm`, `yq`, `tkn` (installed to `/usr/local/bin/`)
+
+> **💡 Note**: The script is idempotent - safe to run multiple times. It will prompt before reinstalling existing tools.
+
+> **💡 Fedora/CentOS Stream**: The script may work on Fedora and CentOS Stream 9+ but is tested on RHEL.
 
 ### Installation
 
@@ -81,24 +119,29 @@ export ANSIBLE_HUB_TOKEN='your-token-here'
 # Or create a token file
 echo 'your-token-here' > token
 
-# 5. Build execution environment (includes all dependencies)
+# 5. Login to Red Hat registry (required for base images)
+podman login registry.redhat.io
+# Enter your Red Hat account credentials when prompted
+# (Get credentials at https://access.redhat.com/terms-based-registry/)
+
+# 6. Build execution environment (includes all dependencies)
 make token
 make build-ee
 
-# 6. Validate cluster prerequisites
+# 7. Validate cluster prerequisites
 make check-prerequisites
 
-# 7. Run Ansible prerequisites (creates secrets, RBAC, namespaces)
+# 8. Run Ansible prerequisites (creates secrets, RBAC, namespaces)
 make operator-deploy-prereqs
 
-# 8. Deploy the platform via Validated Patterns Operator
+# 9. Deploy the platform via Validated Patterns Operator
 make operator-deploy
 
-# 9. Validate deployment
+# 10. Validate deployment
 make argo-healthcheck
 ```
 
-> **💡 Note**: Step 8 (`make operator-deploy`) automatically runs step 7 (`operator-deploy-prereqs`) as a dependency. However, running them separately helps with troubleshooting and understanding the deployment flow.
+> **💡 Note**: Step 9 (`make operator-deploy`) automatically runs step 8 (`operator-deploy-prereqs`) as a dependency. However, running them separately helps with troubleshooting and understanding the deployment flow.
 
 > **⚠️ Critical**: If you skip step 3 (updating repoURL in values files), ArgoCD will try to sync from the example Gitea URL which won't exist on your cluster, causing deployment failures. Always update both `values-global.yaml` and `values-hub.yaml` to point to YOUR fork's repository URL.
 
@@ -134,7 +177,8 @@ vi values-hub.yaml
 # 6. Set Ansible Hub token
 export ANSIBLE_HUB_TOKEN='your-token-here'
 
-# 7. Build and deploy
+# 7. Login to Red Hat registry and build
+podman login registry.redhat.io
 make build-ee
 make check-prerequisites
 make operator-deploy-prereqs
