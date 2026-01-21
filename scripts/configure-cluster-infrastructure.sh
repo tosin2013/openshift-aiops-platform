@@ -618,7 +618,7 @@ print_summary() {
     
     echo "Node Configuration:"
     local worker_count
-    worker_count=$(get_current_worker_count)
+    worker_count=$(oc get nodes -l 'node-role.kubernetes.io/worker' --no-headers 2>/dev/null | wc -l)
     echo "  Worker Nodes: $worker_count"
     oc get nodes -l 'node-role.kubernetes.io/worker' --no-headers | awk '{print "    - " $1 " (" $2 ")"}'
     echo ""
