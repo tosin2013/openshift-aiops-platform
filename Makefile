@@ -87,6 +87,16 @@ help: ## This help message
 	@echo "Pattern: $(NAME)"
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^(\s|[a-zA-Z_0-9-])+:.*?##/ { printf "  \033[36m%-35s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
+.PHONY: install-prereqs-local
+install-prereqs-local: ## Install local workstation prerequisites (RHEL 9/10)
+	@echo "Installing local workstation prerequisites..."
+	@./scripts/install-prerequisites-rhel.sh
+
+.PHONY: configure-cluster
+configure-cluster: ## Configure cluster infrastructure (scale nodes, install ODF)
+	@echo "Configuring cluster infrastructure..."
+	@./scripts/configure-cluster-infrastructure.sh
+
 .PHONY: install
 install: operator-deploy load-secrets validate-deployment ## Install the pattern (deploy + load secrets + validate)
 
