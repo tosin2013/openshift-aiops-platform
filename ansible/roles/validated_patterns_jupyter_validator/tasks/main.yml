@@ -33,3 +33,9 @@
 - name: Verify operator deployment
   include_tasks: verify_operator.yml
   when: jupyter_validator_operator_enabled | default(true)
+
+- name: Configure ArgoCD health checks for NotebookValidationJob
+  include_tasks: configure_argocd.yml
+  when:
+    - jupyter_validator_operator_enabled | default(true)
+    - jupyter_validator_configure_argocd | default(true)

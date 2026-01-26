@@ -12,23 +12,46 @@ This directory contains ArgoCD integration resources for the Jupyter Notebook Va
 
 ## Installation
 
-### 1. Apply Health Check ConfigMap
+### Option 1: Automated via Ansible (Recommended)
+
+The ArgoCD health check ConfigMap is **automatically applied** when deploying the operator via Ansible:
+
+```bash
+ansible-playbook ansible/playbooks/install_jupyter_validator_operator.yml
+```
+
+The Ansible role will:
+1. Deploy the jupyter-notebook-validator operator
+2. Verify the operator is running
+3. **Automatically configure ArgoCD** with NotebookValidationJob health checks
+4. Restart ArgoCD services to reload the configuration
+
+**Configuration Variables** (in `ansible/roles/validated_patterns_jupyter_validator/defaults/main.yml`):
+- `jupyter_validator_configure_argocd: true` - Enable/disable ArgoCD configuration
+- `jupyter_validator_argocd_namespace: "openshift-gitops"` - ArgoCD namespace
+- `jupyter_validator_argocd_configmap_path: "k8s/operators/jupyter-notebook-validator/argocd/health-check-configmap.yaml"`
+
+### Option 2: Manual Installation
+
+If deploying the operator manually or if ArgoCD is installed after the operator:
 
 ```bash
 kubectl apply -f health-check-configmap.yaml
 
-# Restart ArgoCD application-controller to reload health checks
-kubectl rollout restart deployment argocd-application-controller -n argocd
+# Restart ArgoCD repo-server to reload health checks
+kubectl rollout restart deployment openshift-gitops-repo-server -n openshift-gitops
+kubectl rollout restart deployment openshift-gitops-server -n openshift-gitops
 ```
 
-### 2. Verify Installation
+### Verify Installation
 
 ```bash
 # Check ConfigMap applied
-oc get cm argocd-cm -n argocd -o yaml | grep NotebookValidationJob
+oc get cm argocd-cm -n openshift-gitops -o yaml | grep NotebookValidationJob
 
-# Verify ArgoCD reloaded (wait for deployment to be ready)
-oc rollout status deployment argocd-application-controller -n argocd
+# Verify ArgoCD services are ready
+oc rollout status deployment openshift-gitops-repo-server -n openshift-gitops
+oc rollout status deployment openshift-gitops-server -n openshift-gitops
 ```
 
 ## Usage

@@ -30,3 +30,8 @@ jupyter_validator_legacy_images:
 
 # Webhook configuration (auto-detected based on cert-manager for production)
 jupyter_validator_enable_webhooks: false
+
+# ArgoCD Integration (v1.0.5 features)
+# Configure ArgoCD health checks for NotebookValidationJob visibility
+jupyter_validator_configure_argocd: true
+jupyter_validator_argocd_namespace: "openshift-gitops"
