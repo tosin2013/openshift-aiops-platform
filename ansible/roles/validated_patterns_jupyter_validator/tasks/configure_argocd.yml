@@ -1,0 +1,140 @@
+---
+# Configure ArgoCD with NotebookValidationJob health checks
+# This integrates the operator with ArgoCD UI visibility
+
+- name: Display ArgoCD configuration start message
+  debug:
+    msg: |
+      Configuring ArgoCD health checks for NotebookValidationJob
+      ArgoCD Namespace: {{ jupyter_validator_argocd_namespace }}
+
+- name: Check if ArgoCD namespace exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ jupyter_validator_argocd_namespace }}"
+  register: argocd_namespace
+  ignore_errors: yes
+
+- name: Skip ArgoCD configuration if namespace not found
+  debug:
+    msg: "⚠️  ArgoCD namespace '{{ jupyter_validator_argocd_namespace }}' not found. Skipping health check configuration."
+  when: argocd_namespace.resources | length == 0
+
+- name: Get existing argocd-cm ConfigMap
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: argocd-cm
+    namespace: "{{ jupyter_validator_argocd_namespace }}"
+  register: existing_argocd_cm
+  when: argocd_namespace.resources | length > 0
+
+- name: Check if NotebookValidationJob health check already configured
+  set_fact:
+    health_check_exists: "{{ existing_argocd_cm.resources[0].data['resource.customizations.health.mlops.mlops.dev_NotebookValidationJob'] is defined }}"
+  when:
+    - argocd_namespace.resources | length > 0
+    - existing_argocd_cm.resources | length > 0
+
+- name: Display existing health check status
+  debug:
+    msg: "NotebookValidationJob health check {{ 'already configured ✅' if health_check_exists else 'not configured, applying now...' }}"
+  when:
+    - argocd_namespace.resources | length > 0
+    - existing_argocd_cm.resources | length > 0
+
+- name: Patch argocd-cm ConfigMap with NotebookValidationJob health check
+  kubernetes.core.k8s:
+    state: patched
+    api_version: v1
+    kind: ConfigMap
+    name: argocd-cm
+    namespace: "{{ jupyter_validator_argocd_namespace }}"
+    definition:
+      data:
+        resource.customizations.health.mlops.mlops.dev_NotebookValidationJob: |
+          hs = {}
+
+          if obj.status ~= nil then
+            if obj.status.phase == "Succeeded" then
+              hs.status = "Healthy"
+              hs.message = "Notebook validation succeeded"
+            elseif obj.status.phase == "Failed" then
+              hs.status = "Degraded"
+              hs.message = obj.status.message or "Notebook validation failed"
+            elseif obj.status.phase == "ValidationRunning" or obj.status.phase == "Building" then
+              hs.status = "Progressing"
+              hs.message = "Notebook validation in progress"
+            else
+              hs.status = "Progressing"
+              hs.message = obj.status.phase or "Unknown phase"
+            end
+          else
+            hs.status = "Progressing"
+            hs.message = "Waiting for validation to start"
+          end
+
+          return hs
+  when:
+    - argocd_namespace.resources | length > 0
+    - not (health_check_exists | default(false))
+  register: argocd_cm_patched
+
+- name: Gather facts for timestamp
+  setup:
+  when:
+    - argocd_namespace.resources | length > 0
+    - argocd_cm_patched is changed
+
+- name: Restart ArgoCD repo-server to reload health checks
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ item }}"
+    namespace: "{{ jupyter_validator_argocd_namespace }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+  loop:
+    - openshift-gitops-repo-server
+    - openshift-gitops-server
+  when:
+    - argocd_namespace.resources | length > 0
+    - argocd_cm_patched is changed
+  ignore_errors: yes
+  register: argocd_restart
+
+- name: Wait for ArgoCD repo-server to be ready after restart
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: openshift-gitops-repo-server
+    namespace: "{{ jupyter_validator_argocd_namespace }}"
+  register: repo_server_deployment
+  until:
+    - repo_server_deployment.resources | length > 0
+    - repo_server_deployment.resources[0].status.readyReplicas is defined
+    - repo_server_deployment.resources[0].status.readyReplicas >= 1
+  retries: 30
+  delay: 5
+  when:
+    - argocd_namespace.resources | length > 0
+    - argocd_restart is changed
+  ignore_errors: yes
+
+- name: Display ArgoCD configuration result
+  debug:
+    msg: |
+      ✅ ArgoCD health check configured successfully:
+        - ConfigMap: argocd-cm ({{ jupyter_validator_argocd_namespace }})
+        - Health Check: resource.customizations.health.mlops.mlops.dev_NotebookValidationJob
+        - ArgoCD Services: {{ 'restarted' if argocd_restart is changed else 'no restart needed' }}
+        - Status: NotebookValidationJob resources now visible in ArgoCD UI
+  when:
+    - argocd_namespace.resources | length > 0
+    - argocd_cm_patched is succeeded or health_check_exists
