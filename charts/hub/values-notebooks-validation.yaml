@@ -229,11 +229,11 @@ notebooks:
           - name: "isolation-forest-implementation"
             path: "notebooks/02-anomaly-detection/01-isolation-forest-implementation.ipynb"
             tier: "tier2"
-            # Trains anomaly-detector model (primary production model - ADR-050)
-            # Auto-restart InferenceService after successful training
-            blockNextWave: true  # Block wave 4 until model training completes
-            inferenceServiceTrigger:
-              name: "anomaly-detector"  # Auto-restart anomaly-detector InferenceService on success
+            # Trains anomaly-detector model (primary production model - ADR-050, ADR-053)
+            # Model training now handled by Tekton Pipelines (ADR-053)
+            # ArgoCD sync no longer blocks on training - Tekton handles scheduling/health checks
+            # blockNextWave: false  # ADR-053: Removed - Tekton handles training
+            # inferenceServiceTrigger removed - Tekton pipeline handles restart with health checks
             validationConfig:
               level: "production"
               strictMode: true
@@ -262,11 +262,11 @@ notebooks:
           - name: "predictive-analytics-kserve"
             path: "notebooks/02-anomaly-detection/05-predictive-analytics-kserve.ipynb"
             tier: "tier3"
-            # Trains predictive analytics model with KServe-compatible format (Issue #13 fix, ADR-051)
-            # v1.0.5: Example configuration with all features enabled
-            blockNextWave: true  # Block wave 4 until model training completes
-            inferenceServiceTrigger:
-              name: "predictive-analytics"  # Auto-restart InferenceService on success
+            # Trains predictive analytics model with KServe-compatible format (Issue #13 fix, ADR-051, ADR-053)
+            # Model training now handled by Tekton Pipelines (ADR-053)
+            # ArgoCD sync no longer blocks on training - Tekton handles scheduling/health checks
+            # blockNextWave: false  # ADR-053: Removed - Tekton handles training
+            # inferenceServiceTrigger removed - Tekton pipeline handles restart with health checks
             validationConfig:
               level: "production"
               strictMode: true

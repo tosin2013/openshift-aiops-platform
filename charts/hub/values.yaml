@@ -527,3 +527,38 @@ metadata:
   # Annotations
   annotations:
     description: "Self-Healing Platform for OpenShift AIOps"
+
+# Tekton configuration (ADR-053)
+tekton:
+  # Enable Tekton pipelines (default is already deployed, this controls model training pipelines)
+  enabled: true
+
+  # Namespace for Tekton resources
+  namespace: self-healing-platform
+
+  # Model Training Configuration (ADR-053)
+  modelTraining:
+    # Enable model training pipelines
+    enabled: true
+
+    # Service account for pipelines
+    serviceAccount: "pipeline"
+
+    # Enable health checks before deployment
+    healthCheckEnabled: true
+
+    # Anomaly Detector Training Configuration
+    anomalyDetector:
+      # Cron schedule (default: Every Sunday at 2:00 AM UTC)
+      schedule: "0 2 * * 0"
+
+      # Data source mode (synthetic|prometheus|hybrid)
+      dataSource: "prometheus"
+
+    # Predictive Analytics Training Configuration
+    predictiveAnalytics:
+      # Cron schedule (default: Every Sunday at 3:00 AM UTC)
+      schedule: "0 3 * * 0"
+
+      # Data source mode (synthetic|prometheus|hybrid)
+      dataSource: "prometheus"

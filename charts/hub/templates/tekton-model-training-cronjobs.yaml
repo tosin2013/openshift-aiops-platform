@@ -1,0 +1,234 @@
+{{- if and .Values.tekton .Values.tekton.enabled .Values.tekton.modelTraining .Values.tekton.modelTraining.enabled }}
+---
+# CronJob: Weekly Anomaly Detector Training
+# Implements ADR-053: Scheduled model retraining via Tekton
+#
+# Schedule: Every Sunday at 2:00 AM UTC
+# Triggers: model-training-pipeline for anomaly-detector
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weekly-anomaly-detector-training
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: weekly-anomaly-detector-training
+    app.kubernetes.io/part-of: model-training
+    model-name: anomaly-detector
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    description: "Triggers weekly anomaly-detector model training via Tekton Pipeline"
+spec:
+  schedule: "{{ .Values.tekton.modelTraining.anomalyDetector.schedule | default "0 2 * * 0" }}"
+  concurrencyPolicy: Forbid  # Don't run if previous job still running
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: anomaly-detector-training-trigger
+        spec:
+          serviceAccountName: {{ .Values.tekton.modelTraining.serviceAccount | default "pipeline" }}
+          restartPolicy: OnFailure
+          containers:
+            - name: trigger-training
+              image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -e
+                  echo "=========================================="
+                  echo "Triggering Anomaly Detector Training"
+                  echo "Time: $(date)"
+                  echo "=========================================="
+
+                  cat <<EOF | oc apply -f -
+                  apiVersion: tekton.dev/v1beta1
+                  kind: PipelineRun
+                  metadata:
+                    generateName: train-anomaly-detector-
+                    namespace: {{ .Values.main.namespace }}
+                    labels:
+                      model-name: anomaly-detector
+                      triggered-by: cronjob
+                  spec:
+                    pipelineRef:
+                      name: model-training-pipeline
+                    params:
+                      - name: model-name
+                        value: "anomaly-detector"
+                      - name: notebook-path
+                        value: "notebooks/02-anomaly-detection/01-isolation-forest-implementation.ipynb"
+                      - name: data-source
+                        value: "{{ .Values.tekton.modelTraining.anomalyDetector.dataSource | default "prometheus" }}"
+                      - name: inference-service-name
+                        value: "anomaly-detector"
+                      - name: health-check-enabled
+                        value: "{{ .Values.tekton.modelTraining.healthCheckEnabled | default "true" }}"
+                    timeout: 30m
+                  EOF
+
+                  echo "✅ Pipeline triggered successfully"
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "50m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "200m"
+
+---
+# CronJob: Weekly Predictive Analytics Training
+# Implements ADR-053: Scheduled model retraining via Tekton
+#
+# Schedule: Every Sunday at 3:00 AM UTC (1 hour after anomaly-detector)
+# Triggers: model-training-pipeline for predictive-analytics
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weekly-predictive-analytics-training
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: weekly-predictive-analytics-training
+    app.kubernetes.io/part-of: model-training
+    model-name: predictive-analytics
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    description: "Triggers weekly predictive-analytics model training via Tekton Pipeline"
+spec:
+  schedule: "{{ .Values.tekton.modelTraining.predictiveAnalytics.schedule | default "0 3 * * 0" }}"
+  concurrencyPolicy: Forbid  # Don't run if previous job still running
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: predictive-analytics-training-trigger
+        spec:
+          serviceAccountName: {{ .Values.tekton.modelTraining.serviceAccount | default "pipeline" }}
+          restartPolicy: OnFailure
+          containers:
+            - name: trigger-training
+              image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -e
+                  echo "=========================================="
+                  echo "Triggering Predictive Analytics Training"
+                  echo "Time: $(date)"
+                  echo "=========================================="
+
+                  cat <<EOF | oc apply -f -
+                  apiVersion: tekton.dev/v1beta1
+                  kind: PipelineRun
+                  metadata:
+                    generateName: train-predictive-analytics-
+                    namespace: {{ .Values.main.namespace }}
+                    labels:
+                      model-name: predictive-analytics
+                      triggered-by: cronjob
+                  spec:
+                    pipelineRef:
+                      name: model-training-pipeline
+                    params:
+                      - name: model-name
+                        value: "predictive-analytics"
+                      - name: notebook-path
+                        value: "notebooks/02-anomaly-detection/05-predictive-analytics-kserve.ipynb"
+                      - name: data-source
+                        value: "{{ .Values.tekton.modelTraining.predictiveAnalytics.dataSource | default "prometheus" }}"
+                      - name: inference-service-name
+                        value: "predictive-analytics"
+                      - name: health-check-enabled
+                        value: "{{ .Values.tekton.modelTraining.healthCheckEnabled | default "true" }}"
+                    timeout: 45m
+                  EOF
+
+                  echo "✅ Pipeline triggered successfully"
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "50m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "200m"
+
+---
+# ServiceAccount for Tekton Pipelines (if not using default "pipeline")
+{{- if ne (.Values.tekton.modelTraining.serviceAccount | default "pipeline") "pipeline" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.tekton.modelTraining.serviceAccount }}
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.tekton.modelTraining.serviceAccount }}
+    app.kubernetes.io/part-of: model-training
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+{{- end }}
+
+---
+# ClusterRole: Model Training Pipeline Permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: model-training-pipeline
+  labels:
+    app.kubernetes.io/name: model-training-pipeline
+    app.kubernetes.io/part-of: model-training
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+rules:
+  # NotebookValidationJob management
+  - apiGroups: ["mlops.mlops.dev"]
+    resources: ["notebookvalidationjobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+
+  # InferenceService management (restart pods)
+  - apiGroups: ["serving.kserve.io"]
+    resources: ["inferenceservices"]
+    verbs: ["get", "list", "watch"]
+
+  # Pod management (for restarting InferenceService)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+
+  # Pod logs (for debugging)
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+  # PipelineRun management
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns", "taskruns"]
+    verbs: ["create", "get", "list", "watch"]
+
+---
+# ClusterRoleBinding: Bind pipeline permissions to service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: model-training-pipeline-{{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: model-training-pipeline-binding
+    app.kubernetes.io/part-of: model-training
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: model-training-pipeline
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.tekton.modelTraining.serviceAccount | default "pipeline" }}
+    namespace: {{ .Values.main.namespace }}
+
+{{- end }}
