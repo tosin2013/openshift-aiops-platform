@@ -87,12 +87,11 @@ metadata:
     app.kubernetes.io/part-of: self-healing-platform
   annotations:
     argocd.argoproj.io/sync-wave: "-3"
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-options: "Prune=false"
     description: "Waits for notebook-validator image build to complete"
 spec:
   backoffLimit: 0
-  ttlSecondsAfterFinished: 300
+  ttlSecondsAfterFinished: 3600  # 1 hour - allows inspection of completed/failed jobs
   template:
     metadata:
       labels:
@@ -123,6 +122,17 @@ spec:
           if oc get imagestreamtag "$IMAGE_TAG" -n "$NAMESPACE" &>/dev/null; then
             echo "✅ Image $IMAGE_TAG already exists"
             exit 0
+          fi
+
+          # Check if any build exists, trigger if not
+          if ! oc get builds -n "$NAMESPACE" -l buildconfig=notebook-validator 2>/dev/null | grep -q .; then
+            echo "⚠️  No builds found, triggering new build..."
+            if oc start-build notebook-validator -n "$NAMESPACE"; then
+              echo "✅ Build triggered successfully"
+            else
+              echo "❌ Failed to trigger build"
+              exit 1
+            fi
           fi
 
           echo "Image not found, waiting for build to complete..."
