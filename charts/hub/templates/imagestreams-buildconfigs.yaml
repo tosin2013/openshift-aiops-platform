@@ -66,65 +66,9 @@ spec:
       cpu: "500m"
       memory: "512Mi"
 
----
-# ImageStream for notebook validator
-apiVersion: image.openshift.io/v1
-kind: ImageStream
-metadata:
-  name: notebook-validator
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: {{ include "self-healing-platform.name" . }}
-    app.kubernetes.io/component: notebook-validator
-  annotations:
-    argocd.argoproj.io/sync-wave: "-5"
-spec:
-  lookupPolicy:
-    local: true
-
----
-# BuildConfig for notebook validator
-# HYBRID APPROACH: RHOAI PyTorch base + ML packages
-# See: ADR-029, notebooks/Dockerfile
-apiVersion: build.openshift.io/v1
-kind: BuildConfig
-metadata:
-  name: notebook-validator
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: {{ include "self-healing-platform.name" . }}
-    app.kubernetes.io/component: notebook-validator
-  annotations:
-    argocd.argoproj.io/sync-wave: "-4"
-spec:
-  source:
-    type: Git
-    git:
-      uri: {{ $gitUrl }}
-      ref: {{ $gitRef }}
-    contextDir: notebooks
-    sourceSecret:
-      name: {{ .Values.imageBuilds.gitCredentialsSecret }}  # pragma: allowlist secret
-  strategy:
-    type: Docker
-    dockerStrategy:
-      dockerfilePath: Dockerfile
-      forcePull: false
-  output:
-    to:
-      kind: ImageStreamTag
-      name: notebook-validator:latest
-  triggers:
-    - type: ConfigChange
-  runPolicy: Serial
-  resources:
-    limits:
-      cpu: "2"
-      memory: "8Gi"
-    requests:
-      cpu: "500m"
-      memory: "2Gi"
-  completionDeadlineSeconds: 3600
+# NOTE: notebook-validator ImageStream and BuildConfig removed (duplicate)
+# See: charts/hub/templates/notebook-validator-tekton.yaml
+# The notebook-validator build is now managed by the dedicated Tekton build template
 
 # NOTE: MCP Server BuildConfig removed - now deployed as standalone Go project
 # See: ADR-036: Go-Based Standalone MCP Server
