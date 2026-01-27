@@ -1,54 +1,15 @@
-apiVersion: serving.kserve.io/v1beta1
-kind: InferenceService
-metadata:
-  name: anomaly-detector
-  namespace: {{ .Values.main.namespace }}
-  labels:
-    app.kubernetes.io/component: model-serving
-  annotations:
-    serving.kserve.io/deploymentMode: "RawDeployment"  # Changed from Serverless for stability
-    argocd.argoproj.io/sync-wave: "2"
-    # Skip health check - models may not exist on first deploy
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-spec:
-  predictor:
-    containers:
-    - name: kserve-container  # Must be named kserve-container for webhook compatibility
-      image: kserve/sklearnserver:latest
-      args:
-      - --model_dir=/mnt/models/anomaly-detector
-      - --http_port=8080
-      env:
-      - name: LOG_LEVEL
-        value: INFO
-      volumeMounts:
-      - name: model-storage
-        mountPath: /mnt/models
-      resources:
-        requests:
-          cpu: "500m"
-          memory: "1Gi"
-        limits:
-          cpu: "2"
-          memory: "4Gi"
-          # No GPU - sklearn runtime is CPU-only
-    volumes:
-    - name: model-storage
-      persistentVolumeClaim:
-        claimName: model-storage-pvc
+{{- range .Values.models }}
 ---
-# Predictive Analytics InferenceService (PVC-based)
-# Uses containers spec for RawDeployment mode compatibility
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
-  name: predictive-analytics
-  namespace: {{ .Values.main.namespace }}
+  name: {{ .name }}
+  namespace: {{ $.Values.main.namespace }}
   labels:
     app.kubernetes.io/component: model-serving
   annotations:
     serving.kserve.io/deploymentMode: "RawDeployment"  # Changed from Serverless for stability
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: {{ .syncWave | default "2" | quote }}
     # Skip health check - models may not exist on first deploy
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
@@ -57,7 +18,8 @@ spec:
     - name: kserve-container  # Must be named kserve-container for webhook compatibility
       image: kserve/sklearnserver:latest
       args:
-      - --model_dir=/mnt/models/predictive-analytics
+      - --model_name={{ .name }}  # ⭐ Automatically set from model name - prevents default "model" registration
+      - --model_dir=/mnt/models/{{ .name }}
       - --http_port=8080
       env:
       - name: LOG_LEVEL
@@ -67,16 +29,17 @@ spec:
         mountPath: /mnt/models
       resources:
         requests:
-          cpu: "1"
-          memory: "2Gi"
+          cpu: {{ .cpu | quote }}
+          memory: {{ .memory | quote }}
         limits:
-          cpu: "2"
-          memory: "4Gi"
+          cpu: {{ .cpuLimit | default "2" | quote }}
+          memory: {{ .memoryLimit | default "4Gi" | quote }}
           # No GPU - sklearn runtime is CPU-only
     volumes:
     - name: model-storage
       persistentVolumeClaim:
         claimName: model-storage-pvc
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

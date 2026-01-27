@@ -213,6 +213,25 @@ modelServing:
         memory: "1Gi"
         cpu: "1000m"
 
+# Models configuration - Define all models to be served
+# Each model automatically gets:
+# - InferenceService with correct --model_name parameter
+# - Proper resource allocation
+# - ArgoCD sync wave configuration
+models:
+  - name: anomaly-detector
+    cpu: "500m"
+    memory: "1Gi"
+    cpuLimit: "2"
+    memoryLimit: "4Gi"
+    syncWave: "2"
+  - name: predictive-analytics
+    cpu: "1"
+    memory: "2Gi"
+    cpuLimit: "2"
+    memoryLimit: "4Gi"
+    syncWave: "2"
+
 # AI/ML Workbench configuration
 workbench:
   # Enable workbench
