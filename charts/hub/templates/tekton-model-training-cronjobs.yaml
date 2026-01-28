@@ -63,6 +63,8 @@ spec:
                         value: "notebooks/02-anomaly-detection/01-isolation-forest-implementation.ipynb"
                       - name: data-source
                         value: "{{ .Values.tekton.modelTraining.anomalyDetector.dataSource | default "prometheus" }}"
+                      - name: training-hours
+                        value: "168"
                       - name: inference-service-name
                         value: "anomaly-detector"
                       - name: health-check-enabled
@@ -147,6 +149,8 @@ spec:
                         value: "notebooks/02-anomaly-detection/05-predictive-analytics-kserve.ipynb"
                       - name: data-source
                         value: "{{ .Values.tekton.modelTraining.predictiveAnalytics.dataSource | default "prometheus" }}"
+                      - name: training-hours
+                        value: "720"
                       - name: inference-service-name
                         value: "predictive-analytics"
                       - name: health-check-enabled

@@ -119,12 +119,12 @@ storage:
 
   # Model artifacts storage
   # IMPORTANT: This requires ReadWriteMany (RWX) access mode
-  # Default: gp3-csi (RWO fallback - limits to single pod access)
-  # For multi-pod access: Set to "ocs-storagecluster-cephfs" if ODF is installed
+  # Using ODF (OpenShift Data Foundation) CephFS for multi-pod access
+  # Alternative: gp3-csi (RWO only - limits to single pod access)
   # Or use provider-specific RWX storage class (Azure Files, GCP Filestore, NFS, etc.)
   modelArtifacts:
-    size: "50Gi"
-    storageClass: "gp3-csi"  # ⚠️ RWO only - change to RWX class if available
+    size: "100Gi"
+    storageClass: "ocs-storagecluster-cephfs"  # RWX - allows multiple predictor pods
 
   # Workbench data storage
   workbenchData:
@@ -220,16 +220,16 @@ modelServing:
 # - ArgoCD sync wave configuration
 models:
   - name: anomaly-detector
-    cpu: "500m"
+    cpu: "1000m"
     memory: "1Gi"
-    cpuLimit: "2"
-    memoryLimit: "4Gi"
+    cpuLimit: "4"
+    memoryLimit: "8Gi"
     syncWave: "2"
   - name: predictive-analytics
     cpu: "1"
     memory: "2Gi"
     cpuLimit: "2"
-    memoryLimit: "4Gi"
+    memoryLimit: "6Gi"
     syncWave: "2"
 
 # AI/ML Workbench configuration

@@ -39,6 +39,10 @@ spec:
       type: string
       default: "synthetic"
       description: "Data source mode (synthetic|prometheus|hybrid)"
+    - name: training-hours
+      type: string
+      default: "168"
+      description: "Training window in hours (24=1day, 168=1week, 720=30days)"
     - name: git-url
       type: string
       default: "{{ .Values.git.repoURL | default .Values.global.git.repoURL }}"
@@ -62,6 +66,7 @@ spec:
         MODEL_NAME="$(params.model-name)"
         NOTEBOOK_PATH="$(params.notebook-path)"
         DATA_SOURCE="$(params.data-source)"
+        TRAINING_HOURS="$(params.training-hours)"
         GIT_URL="$(params.git-url)"
         GIT_REF="$(params.git-ref)"
         JOB_NAME="train-${MODEL_NAME}-$(date +%s)"
@@ -69,12 +74,13 @@ spec:
         echo "=========================================="
         echo "Creating NotebookValidationJob"
         echo "=========================================="
-        echo "Model:        $MODEL_NAME"
-        echo "Notebook:     $NOTEBOOK_PATH"
-        echo "Data Source:  $DATA_SOURCE"
-        echo "Git URL:      $GIT_URL"
-        echo "Git Ref:      $GIT_REF"
-        echo "Job Name:     $JOB_NAME"
+        echo "Model:          $MODEL_NAME"
+        echo "Notebook:       $NOTEBOOK_PATH"
+        echo "Data Source:    $DATA_SOURCE"
+        echo "Training Hours: $TRAINING_HOURS"
+        echo "Git URL:        $GIT_URL"
+        echo "Git Ref:        $GIT_REF"
+        echo "Job Name:       $JOB_NAME"
         echo "=========================================="
 
         cat <<EOF | oc apply -f -
@@ -99,6 +105,8 @@ spec:
                 value: $DATA_SOURCE
               - name: PROMETHEUS_URL
                 value: http://prometheus-k8s.openshift-monitoring.svc:9090
+              - name: TRAINING_HOURS
+                value: $TRAINING_HOURS
               - name: TRAINING_DAYS
                 value: "7"
               - name: ANOMALY_RATE
@@ -529,6 +537,10 @@ spec:
       type: string
       default: "hybrid"
       description: "Data source mode (synthetic|prometheus|hybrid)"
+    - name: training-hours
+      type: string
+      default: "168"
+      description: "Training window in hours (24=1day, 168=1week, 720=30days)"
     - name: inference-service-name
       type: string
       description: "InferenceService to restart after training"
@@ -556,6 +568,8 @@ spec:
           value: $(params.notebook-path)
         - name: data-source
           value: $(params.data-source)
+        - name: training-hours
+          value: $(params.training-hours)
         - name: git-url
           value: $(params.git-url)
         - name: git-ref

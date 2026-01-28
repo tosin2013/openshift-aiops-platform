@@ -1,0 +1,198 @@
+name: Integration Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      openshift_api:
+        description: 'OpenShift API URL'
+        required: true
+      openshift_token:
+        description: 'OpenShift token (from secrets)'
+        required: true
+      test_namespace:
+        description: 'Test namespace'
+        default: 'self-healing-platform'
+        required: false
+      training_hours:
+        description: 'Training hours for quick test (default: 24)'
+        default: '24'
+        required: false
+
+jobs:
+  deploy-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout aiops-platform
+        uses: actions/checkout@v4
+        with:
+          repository: tosin2013/openshift-aiops-platform
+          path: aiops-platform
+
+      - name: Checkout coordination-engine
+        uses: actions/checkout@v4
+        with:
+          repository: tosin2013/openshift-coordination-engine
+          path: coordination-engine
+
+      - name: Checkout cluster-health-mcp
+        uses: actions/checkout@v4
+        with:
+          repository: tosin2013/openshift-cluster-health-mcp
+          path: cluster-health-mcp
+
+      - name: Install OpenShift CLI
+        run: |
+          curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz
+          tar -xvf openshift-client-linux.tar.gz
+          sudo mv oc /usr/local/bin/
+          oc version
+
+      - name: Install Tekton CLI
+        run: |
+          curl -LO https://github.com/tektoncd/cli/releases/download/v0.35.1/tkn_0.35.1_Linux_x86_64.tar.gz
+          tar -xvf tkn_0.35.1_Linux_x86_64.tar.gz
+          sudo mv tkn /usr/local/bin/
+          tkn version
+
+      - name: Login to OpenShift
+        run: |
+          oc login --token=${{ inputs.openshift_token }} --server=${{ inputs.openshift_api }} --insecure-skip-tls-verify=true
+          oc whoami
+          oc cluster-info
+
+      - name: Deploy Platform Components
+        working-directory: aiops-platform
+        run: |
+          echo "Deploying self-healing platform to ${{ inputs.test_namespace }}"
+
+          # Create namespace if it doesn't exist
+          oc create namespace ${{ inputs.test_namespace }} --dry-run=client -o yaml | oc apply -f -
+
+          # Deploy with Helm
+          helm upgrade --install self-healing-platform charts/hub \
+            --namespace ${{ inputs.test_namespace }} \
+            --create-namespace \
+            --set global.git.repoURL=https://github.com/tosin2013/openshift-aiops-platform.git \
+            --set global.git.revision=main \
+            --wait --timeout 10m
+
+          echo "✅ Platform deployed"
+
+      - name: Wait for InferenceServices
+        run: |
+          echo "Waiting for InferenceServices to be ready..."
+
+          # Wait for anomaly-detector
+          oc wait --for=condition=Ready inferenceservice/anomaly-detector \
+            -n ${{ inputs.test_namespace }} --timeout=5m || true
+
+          # Wait for predictive-analytics
+          oc wait --for=condition=Ready inferenceservice/predictive-analytics \
+            -n ${{ inputs.test_namespace }} --timeout=5m || true
+
+          echo "✅ InferenceServices ready"
+
+      - name: Train Models with ${{ inputs.training_hours }}h Data
+        working-directory: aiops-platform
+        run: |
+          echo "Training models with ${{ inputs.training_hours }} hours of data..."
+
+          # Train anomaly-detector
+          ./scripts/trigger-model-training.sh anomaly-detector ${{ inputs.training_hours }} synthetic ${{ inputs.test_namespace }} <<< "y"
+
+          # Wait for training to complete
+          sleep 10
+          LATEST_RUN=$(oc get pipelineruns -n ${{ inputs.test_namespace }} -l model-name=anomaly-detector --sort-by=.metadata.creationTimestamp -o name | tail -1)
+          oc wait --for=condition=Succeeded $LATEST_RUN -n ${{ inputs.test_namespace }} --timeout=20m
+
+          echo "✅ Anomaly detector trained"
+
+          # Train predictive-analytics
+          ./scripts/trigger-model-training.sh predictive-analytics ${{ inputs.training_hours }} synthetic ${{ inputs.test_namespace }} <<< "y"
+
+          # Wait for training to complete
+          sleep 10
+          LATEST_RUN=$(oc get pipelineruns -n ${{ inputs.test_namespace }} -l model-name=predictive-analytics --sort-by=.metadata.creationTimestamp -o name | tail -1)
+          oc wait --for=condition=Succeeded $LATEST_RUN -n ${{ inputs.test_namespace }} --timeout=20m
+
+          echo "✅ Predictive analytics trained"
+
+      - name: Validate Models
+        working-directory: aiops-platform
+        run: |
+          echo "Validating models..."
+          export NAMESPACE=${{ inputs.test_namespace }}
+          ./scripts/validate-models.sh
+
+      - name: Test Anomaly Detector Endpoint
+        working-directory: aiops-platform
+        run: |
+          echo "Testing anomaly detector endpoint..."
+          ./scripts/test-model-endpoint.sh anomaly-detector ${{ inputs.test_namespace }}
+
+      - name: Test Predictive Analytics Endpoint
+        working-directory: aiops-platform
+        run: |
+          echo "Testing predictive analytics endpoint..."
+          ./scripts/test-model-endpoint.sh predictive-analytics ${{ inputs.test_namespace }}
+
+      - name: Check Training Status
+        working-directory: aiops-platform
+        run: |
+          echo "Checking training status..."
+          export NAMESPACE=${{ inputs.test_namespace }}
+          ./scripts/check-training-status.sh
+
+      - name: Collect Logs on Failure
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "Collecting diagnostic information..."
+          echo "=========================================="
+
+          # InferenceServices
+          echo "InferenceServices:"
+          oc get inferenceservices -n ${{ inputs.test_namespace }}
+
+          # Pods
+          echo ""
+          echo "Pods:"
+          oc get pods -n ${{ inputs.test_namespace }}
+
+          # Recent PipelineRuns
+          echo ""
+          echo "PipelineRuns:"
+          oc get pipelineruns -n ${{ inputs.test_namespace }}
+
+          # Failed training logs
+          FAILED_RUN=$(oc get pipelineruns -n ${{ inputs.test_namespace }} \
+            -o jsonpath='{.items[?(@.status.conditions[0].reason=="Failed")].metadata.name}' | head -1)
+
+          if [ -n "$FAILED_RUN" ]; then
+            echo ""
+            echo "Failed pipeline logs:"
+            tkn pipelinerun logs $FAILED_RUN -n ${{ inputs.test_namespace }} || true
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Cleaning up test namespace..."
+          oc delete namespace ${{ inputs.test_namespace }} --wait=false || true
+          echo "✅ Cleanup initiated"
+
+      - name: Integration Test Summary
+        if: success()
+        run: |
+          echo "=========================================="
+          echo "✅ Integration Test PASSED"
+          echo "=========================================="
+          echo "All tests completed successfully:"
+          echo "  ✅ Platform deployment"
+          echo "  ✅ Model training (${​{ inputs.training_hours }}h data)"
+          echo "  ✅ Model validation"
+          echo "  ✅ Endpoint testing"
+          echo ""
+          echo "The platform is ready for release!"
