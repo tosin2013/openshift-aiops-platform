@@ -19,12 +19,16 @@ try:
     import xgboost as xgb
     XGBOOST_AVAILABLE = True
     # Check if GPU support is available in XGBoost build
+    # Must actually call fit() to trigger tree_method validation
     try:
-        # Test if gpu_hist is a valid tree method
-        test_model = xgb.XGBRegressor(tree_method='gpu_hist', n_estimators=1)
-        # Don't actually fit, just check if it initializes
+        test_model = xgb.XGBRegressor(tree_method='gpu_hist', n_estimators=1, max_depth=1)
+        # Create minimal test data and fit to trigger validation
+        _test_X = np.array([[1, 2], [3, 4], [5, 6]])
+        _test_y = np.array([1, 2, 3])
+        test_model.fit(_test_X, _test_y)
         XGBOOST_GPU_AVAILABLE = True
-    except (xgb.core.XGBoostError, ValueError):
+        del test_model, _test_X, _test_y
+    except (xgb.core.XGBoostError, ValueError, Exception):
         XGBOOST_GPU_AVAILABLE = False
 except ImportError:
     from sklearn.ensemble import RandomForestRegressor
