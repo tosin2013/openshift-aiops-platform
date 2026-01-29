@@ -197,7 +197,7 @@ spec:
     - name: model-storage
       persistentVolumeClaim:
         claimName: ${PVC_NAME}
-  timeout: 45m
+  timeout: 90m
 EOF
 else
     # CPU-only job
@@ -248,7 +248,7 @@ spec:
     - name: model-storage
       persistentVolumeClaim:
         claimName: ${PVC_NAME}
-  timeout: 30m
+  timeout: 90m
 EOF
 fi
 

@@ -13,6 +13,29 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split, TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import logging
+import json
+from datetime import datetime
+
+# #region agent log - DEBUG INSTRUMENTATION
+DEBUG_LOG_PATH = '/home/lab-user/openshift-aiops-platform/.cursor/debug.log'
+
+def _debug_log(hypothesis_id: str, location: str, message: str, data: dict = None):
+    """Write debug log entry to NDJSON file"""
+    try:
+        entry = {
+            "timestamp": int(datetime.now().timestamp() * 1000),
+            "sessionId": "debug-session",
+            "runId": "predictive-analytics-train",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {}
+        }
+        with open(DEBUG_LOG_PATH, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+    except Exception:
+        pass  # Silent fail for debug logging
+# #endregion
 
 # Try to import XGBoost for GPU training, fall back to sklearn RandomForest
 try:
@@ -162,8 +185,30 @@ class PredictiveAnalytics:
         """
         logger.info("Starting predictive analytics training...")
 
+        # #region agent log - Hypothesis A,B: Entry point with memory info
+        import psutil
+        mem = psutil.virtual_memory()
+        _debug_log("A,B", "predictive_analytics.py:train:entry", "Train method started", {
+            "input_shape": list(data.shape),
+            "input_columns": list(data.columns)[:10],
+            "memory_used_gb": round(mem.used / (1024**3), 2),
+            "memory_available_gb": round(mem.available / (1024**3), 2),
+            "memory_percent": mem.percent
+        })
+        # #endregion
+
         # Engineer features
         features = self.engineer_features(data)
+
+        # #region agent log - Hypothesis C: Feature engineering output
+        _debug_log("C", "predictive_analytics.py:train:post_engineer", "Features engineered", {
+            "features_shape": list(features.shape),
+            "features_columns_count": len(features.columns),
+            "features_sample_cols": list(features.columns)[:10],
+            "has_nan": bool(features.isna().any().any()),
+            "has_inf": bool((features == np.inf).any().any() or (features == -np.inf).any().any())
+        })
+        # #endregion
         self.feature_names = list(features.columns)
 
         results = {}
@@ -175,8 +220,27 @@ class PredictiveAnalytics:
 
             logger.info(f"Training model for {target_metric}...")
 
+            # #region agent log - Hypothesis B,C: Before sequence creation
+            _debug_log("B,C", f"predictive_analytics.py:train:{target_metric}:pre_sequence",
+                      f"Creating sequences for {target_metric}", {
+                "target_metric": target_metric,
+                "features_shape": list(features.shape),
+                "lookback_window": self.lookback_window,
+                "forecast_horizon": self.forecast_horizon
+            })
+            # #endregion
+
             # Create sequences
             X, y = self.create_sequences(features, target_metric)
+
+            # #region agent log - Hypothesis C: Sequence shapes
+            _debug_log("C", f"predictive_analytics.py:train:{target_metric}:post_sequence",
+                      f"Sequences created for {target_metric}", {
+                "X_shape": list(X.shape) if len(X) > 0 else [0],
+                "y_shape": list(y.shape) if len(y) > 0 else [0],
+                "X_len": len(X)
+            })
+            # #endregion
 
             if len(X) == 0:
                 logger.warning(f"Not enough data for {target_metric}")
@@ -184,6 +248,14 @@ class PredictiveAnalytics:
 
             # Reshape X for Random Forest (flatten sequences)
             X_reshaped = X.reshape(X.shape[0], -1)
+
+            # #region agent log - Hypothesis C: Reshaped features
+            _debug_log("C", f"predictive_analytics.py:train:{target_metric}:reshaped",
+                      f"Features reshaped for {target_metric}", {
+                "X_reshaped_shape": list(X_reshaped.shape),
+                "expected_features": self.lookback_window * features.shape[1]
+            })
+            # #endregion
 
             # Split data
             X_train, X_test, y_train, y_test = train_test_split(
@@ -197,6 +269,19 @@ class PredictiveAnalytics:
 
             # Train model for each forecast step
             models_for_metric = []
+
+            # #region agent log - Hypothesis A: Memory before training loop
+            mem = psutil.virtual_memory()
+            _debug_log("A", f"predictive_analytics.py:train:{target_metric}:pre_train_loop",
+                      f"Starting training loop for {target_metric}", {
+                "X_train_shape": list(X_train_scaled.shape),
+                "y_train_shape": list(y_train.shape),
+                "memory_used_gb": round(mem.used / (1024**3), 2),
+                "memory_percent": mem.percent,
+                "forecast_steps": self.forecast_horizon
+            })
+            # #endregion
+
             for step in range(self.forecast_horizon):
                 if XGBOOST_AVAILABLE:
                     # XGBoost - faster than RandomForest even on CPU
@@ -235,12 +320,40 @@ class PredictiveAnalytics:
                         random_state=42,
                         n_jobs=-1
                     )
+                # #region agent log - Hypothesis A,B: Before fit
+                if step == 0 or step == self.forecast_horizon - 1:
+                    _debug_log("A,B", f"predictive_analytics.py:train:{target_metric}:step{step}:pre_fit",
+                              f"Fitting model step {step}", {
+                        "step": step,
+                        "model_type": type(model).__name__
+                    })
+                # #endregion
+
                 model.fit(X_train_scaled, y_train[:, step])
                 models_for_metric.append(model)
+
+                # #region agent log - Hypothesis A: After fit memory check
+                if step == 0 or step == self.forecast_horizon - 1:
+                    mem = psutil.virtual_memory()
+                    _debug_log("A", f"predictive_analytics.py:train:{target_metric}:step{step}:post_fit",
+                              f"Model step {step} trained", {
+                        "step": step,
+                        "memory_used_gb": round(mem.used / (1024**3), 2),
+                        "memory_percent": mem.percent
+                    })
+                # #endregion
 
             # Store models and scaler
             self.models[target_metric] = models_for_metric
             self.scalers[target_metric] = scaler
+
+            # #region agent log - Hypothesis B: Metric training complete
+            _debug_log("B", f"predictive_analytics.py:train:{target_metric}:complete",
+                      f"Training complete for {target_metric}", {
+                "models_count": len(models_for_metric),
+                "scaler_type": type(scaler).__name__
+            })
+            # #endregion
 
             # Evaluate model
             y_pred = np.zeros_like(y_test)
@@ -273,6 +386,17 @@ class PredictiveAnalytics:
             'feature_count': len(self.feature_names),
             'metrics': results
         }
+
+        # #region agent log - Hypothesis B: Training fully complete
+        mem = psutil.virtual_memory()
+        _debug_log("B", "predictive_analytics.py:train:success", "All training completed successfully", {
+            "models_trained": len(self.models),
+            "feature_count": len(self.feature_names),
+            "memory_used_gb": round(mem.used / (1024**3), 2),
+            "memory_percent": mem.percent,
+            "metrics_list": list(results.keys())
+        })
+        # #endregion
 
         logger.info(f"Training completed: {len(self.models)} models trained")
         return overall_results
