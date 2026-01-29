@@ -82,7 +82,7 @@ And update the formula calculation to match Python:
 // Python formula: lookback × (metrics + time_features + features_per_metric × metrics)
 // = 24 × (5 + 6 + 25×5) = 24 × 136 = 3264
 func (b *PredictiveFeatureBuilder) calculateTotalFeatures() int {
-    columnsPerTimestep := len(predictiveBaseMetrics) + TimeFeatureCount + 
+    columnsPerTimestep := len(predictiveBaseMetrics) + TimeFeatureCount +
                           (FeaturesPerMetric * len(predictiveBaseMetrics))
     return b.config.LookbackHours * columnsPerTimestep
 }
@@ -232,10 +232,137 @@ After fixes are applied:
 
 ---
 
+### Bug 3: KServe Response Parsing Failure (NEW - 2026-01-29)
+
+**Status**: Discovered after Bug 1 and Bug 2 were fixed in version `ocp-4.18-b44ea29`
+
+#### Expected Behavior
+Coordination engine parses KServe model response and returns prediction results.
+
+#### Actual Behavior
+JSON parsing fails when processing the model response:
+```json
+{"error":"failed to parse forecast response from model predictive-analytics: json: cannot unmarshal number into Go struct field .predictions of type []float64","level":"error","model":"predictive-analytics","msg":"KServe prediction failed","time":"2026-01-29T02:41:21Z"}
+```
+
+#### KServe Model Returns Correct Format
+
+Direct test to KServe model works correctly:
+```bash
+# Test with 3264 zero features
+curl -X POST "http://predictive-analytics-stable:8080/v1/models/predictive-analytics:predict" \
+  -H "Content-Type: application/json" \
+  -d '{"instances": [[0.0, 0.0, ... (3264 zeros) ...]]}'
+
+# Response (CORRECT):
+{"predictions":[0.12351758718119261]}
+```
+
+The model returns `{"predictions": [0.123...]}` (array format), which is correct.
+
+#### Root Cause Hypothesis
+
+The Go code in `pkg/clients/kserve.go` or response parsing has a struct field mismatch. The error suggests:
+- The code expects `predictions` to be `[]float64` (array)
+- But it's receiving what appears to be a single number
+
+Possible causes:
+1. The struct has nested fields and `.predictions` refers to an inner field
+2. The response parsing is looking at a different JSON path
+3. There may be a different response format when using batch predictions vs single predictions
+
+#### Proposed Fix
+
+Review `pkg/clients/kserve.go` response parsing:
+
+```go
+// Current struct might be something like:
+type ForecastResponse struct {
+    Predictions float64 `json:"predictions"`  // WRONG - expects number
+}
+
+// Should be:
+type ForecastResponse struct {
+    Predictions []float64 `json:"predictions"`  // CORRECT - expects array
+}
+
+// Or handle both cases:
+type KServeResponse struct {
+    Predictions interface{} `json:"predictions"` // Can be []float64 or float64
+}
+```
+
+Also verify the response parsing logic handles sklearn server output format:
+```go
+// sklearn server returns: {"predictions": [value1, value2, ...]}
+// NOT: {"predictions": {"values": [...]}} or other nested formats
+```
+
+#### Verification
+
+After fix:
+```bash
+# Test prediction
+curl -X POST http://coordination-engine:8080/api/v1/predict \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"cluster","metric":"cpu","target_date":"2026-01-29","target_time":"19:00"}'
+
+# Expected response (example):
+{"status":"success","prediction":{"cpu_usage":0.45,"confidence":0.85}}
+```
+
+---
+
+### Files to Modify (Updated)
+
+1. **`pkg/features/predictive.go`** ✅ Fixed in b44ea29
+   - Update `timeFeatureNames` to 6 features
+   - Update `TimeFeatureCount` constant to 6
+   - Fix feature calculation formula
+
+2. **`pkg/features/prometheus_adapter.go`** ✅ Fixed in b44ea29
+   - Fix matrix response parsing
+   - Add debug logging for response body
+
+3. **`pkg/clients/kserve.go`** ❌ NEW BUG
+   - Fix `ForecastResponse` struct to use `[]float64` for predictions
+   - Handle sklearn server response format correctly
+
+4. **`docs/FEATURE-ENGINEERING-GUIDE.md`**
+   - Update formula: `lookback × (metrics + time_features + features_per_metric × metrics)`
+   - Update time features table (remove `quarter`, `week_of_year`)
+   - Update expected feature count: 3200 → 3264
+   - Add section on training vs prediction windows
+
+---
+
 ### Acceptance Criteria
 
-- [ ] Feature count matches model expectation (3264)
-- [ ] Prometheus range queries return valid data
+- [x] Feature count matches model expectation (3264) ✅ Fixed in b44ea29
+- [x] Prometheus range queries return valid data ✅ Fixed in b44ea29
+- [ ] **KServe response parsing handles sklearn server format** ❌ NEW BUG
 - [ ] Predictions complete successfully within timeout
 - [ ] FEATURE-ENGINEERING-GUIDE.md updated with correct formula
 - [ ] Unit tests pass with new feature count
+
+---
+
+### Timeline
+
+| Date | Version | Status |
+|------|---------|--------|
+| 2026-01-28 | Pre-b44ea29 | Feature count: 3200, Prometheus queries: failing |
+| 2026-01-29 | ocp-4.18-b44ea29 | Feature count: 3264 ✅, Prometheus: working ✅, Response parsing: failing ❌ |
+
+### Configuration Applied
+
+```yaml
+# charts/hub/values.yaml
+coordinationEngine:
+  kserve:
+    timeout: "120s"  # Increased from 10s for feature engineering
+  featureEngineering:
+    enabled: true
+    lookbackHours: 24
+    expectedFeatureCount: 3264
+```
