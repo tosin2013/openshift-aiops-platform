@@ -193,7 +193,8 @@ modelServing:
 
   # sklearn runtime configuration
   sklearn:
-    image: kserve/sklearnserver:latest
+    # Custom sklearn server with XGBoost support (built via BuildConfig)
+    image: image-registry.openshift-image-registry.svc:5000/self-healing-platform/sklearn-xgboost-server:latest
     resources:
       requests:
         memory: "256Mi"
