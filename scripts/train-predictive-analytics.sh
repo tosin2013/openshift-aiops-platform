@@ -82,7 +82,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --fast)
             FAST_MODE=true
-            TRAINING_HOURS=1
+            TRAINING_HOURS=4  # Minimum 4h needed for 48 samples (lookback=24 + horizon=12 = 36 min)
             MAX_SAMPLES=200
             shift
             ;;
