@@ -25,19 +25,19 @@ jobs:
 
     steps:
       - name: Checkout aiops-platform
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: tosin2013/openshift-aiops-platform
           path: aiops-platform
 
       - name: Checkout coordination-engine
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: tosin2013/openshift-coordination-engine
           path: coordination-engine
 
       - name: Checkout cluster-health-mcp
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: tosin2013/openshift-cluster-health-mcp
           path: cluster-health-mcp
