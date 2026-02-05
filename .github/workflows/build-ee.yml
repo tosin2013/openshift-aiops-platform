@@ -110,6 +110,19 @@ jobs:
             echo "ansible.cfg already exists"
           fi
 
+          # Verify ansible.cfg was created and token was substituted
+          echo "Verifying ansible.cfg..."
+          if grep -q '\$ANSIBLE_HUB_TOKEN' ansible.cfg; then
+            echo "❌ ERROR: Token placeholder not substituted in ansible.cfg"
+            exit 1
+          fi
+          if grep -q 'token=' ansible.cfg; then
+            echo "✅ Token field found in ansible.cfg"
+          else
+            echo "❌ ERROR: No token field in ansible.cfg"
+            exit 1
+          fi
+
       - name: Build execution environment
         env:
           ANSIBLE_HUB_TOKEN: ${{ secrets.ANSIBLE_HUB_TOKEN }}
@@ -221,6 +234,19 @@ jobs:
             echo "Generating ansible.cfg from template..."
             envsubst < files/ansible.cfg.template > ansible.cfg
             echo "✅ ansible.cfg generated"
+          fi
+
+          # Verify ansible.cfg was created and token was substituted
+          echo "Verifying ansible.cfg..."
+          if grep -q '\$ANSIBLE_HUB_TOKEN' ansible.cfg; then
+            echo "❌ ERROR: Token placeholder not substituted in ansible.cfg"
+            exit 1
+          fi
+          if grep -q 'token=' ansible.cfg; then
+            echo "✅ Token field found in ansible.cfg"
+          else
+            echo "❌ ERROR: No token field in ansible.cfg"
+            exit 1
           fi
 
       - name: Rebuild execution environment for publish
