@@ -87,13 +87,13 @@ jobs:
       - name: Log in to registry.redhat.io (optional)
         continue-on-error: true
         env:
-          REDHAT_REGISTRY_USERNAME: ${{ secrets.REDHAT_REGISTRY_USERNAME }}
+          REDHAT_REGISTRY_USER: ${{ secrets.REDHAT_REGISTRY_USER }}
           REDHAT_REGISTRY_PASSWORD: ${{ secrets.REDHAT_REGISTRY_PASSWORD }}
         run: |
-          if [[ -n "$REDHAT_REGISTRY_USERNAME" ]] && [[ -n "$REDHAT_REGISTRY_PASSWORD" ]]; then
+          if [[ -n "$REDHAT_REGISTRY_USER" ]] && [[ -n "$REDHAT_REGISTRY_PASSWORD" ]]; then
             echo "Logging in to registry.redhat.io..."
             echo "$REDHAT_REGISTRY_PASSWORD" | podman login registry.redhat.io \
-              --username "$REDHAT_REGISTRY_USERNAME" --password-stdin
+              --username "$REDHAT_REGISTRY_USER" --password-stdin
           else
             echo "Skipping registry.redhat.io login (credentials not provided)"
           fi
@@ -182,13 +182,13 @@ jobs:
       - name: Log in to registry.redhat.io (optional)
         continue-on-error: true
         env:
-          REDHAT_REGISTRY_USERNAME: ${{ secrets.REDHAT_REGISTRY_USERNAME }}
+          REDHAT_REGISTRY_USER: ${{ secrets.REDHAT_REGISTRY_USER }}
           REDHAT_REGISTRY_PASSWORD: ${{ secrets.REDHAT_REGISTRY_PASSWORD }}
         run: |
-          if [[ -n "$REDHAT_REGISTRY_USERNAME" ]] && [[ -n "$REDHAT_REGISTRY_PASSWORD" ]]; then
+          if [[ -n "$REDHAT_REGISTRY_USER" ]] && [[ -n "$REDHAT_REGISTRY_PASSWORD" ]]; then
             echo "Logging in to registry.redhat.io..."
             echo "$REDHAT_REGISTRY_PASSWORD" | podman login registry.redhat.io \
-              --username "$REDHAT_REGISTRY_USERNAME" --password-stdin
+              --username "$REDHAT_REGISTRY_USER" --password-stdin
           else
             echo "Skipping registry.redhat.io login (credentials not provided)"
           fi

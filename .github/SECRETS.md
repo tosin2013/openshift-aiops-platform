@@ -62,7 +62,7 @@ Name: QUAY_PASSWORD
 Secret: your-quay-password-or-robot-token
 ```
 
-### 4. REDHAT_REGISTRY_USERNAME (Optional)
+### 4. REDHAT_REGISTRY_USER (Optional)
 
 **Purpose:** Username for authenticating to registry.redhat.io to pull base images.
 
@@ -75,7 +75,7 @@ Secret: your-quay-password-or-robot-token
 
 **Example:**
 ```
-Name: REDHAT_REGISTRY_USERNAME
+Name: REDHAT_REGISTRY_USER
 Secret: your-redhat-username
 ```
 
@@ -132,7 +132,7 @@ After adding secrets, verify they're configured correctly:
 
 ### "registry.redhat.io" login fails
 - This is optional and the workflow will continue
-- Add `REDHAT_REGISTRY_USERNAME` and `REDHAT_REGISTRY_PASSWORD` if needed
+- Add `REDHAT_REGISTRY_USER` and `REDHAT_REGISTRY_PASSWORD` if needed
 - Or ignore if the base image is already cached
 
 ## Robot Account Setup (Recommended for Quay.io)
