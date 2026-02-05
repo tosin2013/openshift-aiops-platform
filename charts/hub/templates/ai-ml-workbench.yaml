@@ -145,6 +145,16 @@ spec:
             secretKeyRef:
               name: model-storage-config
               key: AWS_S3_BUCKET
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: model-storage-config
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: model-storage-config
+              key: AWS_SECRET_ACCESS_KEY
         - name: PIP_CERT
           value: /etc/pki/tls/custom-certs/ca-bundle.crt
         - name: REQUESTS_CA_BUNDLE
