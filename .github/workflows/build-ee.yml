@@ -85,14 +85,18 @@ jobs:
           pip install ansible-builder ansible-navigator
 
       - name: Log in to registry.redhat.io (optional)
-        if: ${{ secrets.REDHAT_REGISTRY_USERNAME != '' && secrets.REDHAT_REGISTRY_PASSWORD != '' }}
         continue-on-error: true
         env:
           REDHAT_REGISTRY_USERNAME: ${{ secrets.REDHAT_REGISTRY_USERNAME }}
           REDHAT_REGISTRY_PASSWORD: ${{ secrets.REDHAT_REGISTRY_PASSWORD }}
         run: |
-          echo "$REDHAT_REGISTRY_PASSWORD" | podman login registry.redhat.io \
-            --username "$REDHAT_REGISTRY_USERNAME" --password-stdin
+          if [[ -n "$REDHAT_REGISTRY_USERNAME" ]] && [[ -n "$REDHAT_REGISTRY_PASSWORD" ]]; then
+            echo "Logging in to registry.redhat.io..."
+            echo "$REDHAT_REGISTRY_PASSWORD" | podman login registry.redhat.io \
+              --username "$REDHAT_REGISTRY_USERNAME" --password-stdin
+          else
+            echo "Skipping registry.redhat.io login (credentials not provided)"
+          fi
 
       - name: Generate ansible.cfg from template
         env:
@@ -176,14 +180,18 @@ jobs:
           pip install ansible-builder ansible-navigator
 
       - name: Log in to registry.redhat.io (optional)
-        if: ${{ secrets.REDHAT_REGISTRY_USERNAME != '' && secrets.REDHAT_REGISTRY_PASSWORD != '' }}
         continue-on-error: true
         env:
           REDHAT_REGISTRY_USERNAME: ${{ secrets.REDHAT_REGISTRY_USERNAME }}
           REDHAT_REGISTRY_PASSWORD: ${{ secrets.REDHAT_REGISTRY_PASSWORD }}
         run: |
-          echo "$REDHAT_REGISTRY_PASSWORD" | podman login registry.redhat.io \
-            --username "$REDHAT_REGISTRY_USERNAME" --password-stdin
+          if [[ -n "$REDHAT_REGISTRY_USERNAME" ]] && [[ -n "$REDHAT_REGISTRY_PASSWORD" ]]; then
+            echo "Logging in to registry.redhat.io..."
+            echo "$REDHAT_REGISTRY_PASSWORD" | podman login registry.redhat.io \
+              --username "$REDHAT_REGISTRY_USERNAME" --password-stdin
+          else
+            echo "Skipping registry.redhat.io login (credentials not provided)"
+          fi
 
       - name: Generate ansible.cfg from template
         env:
