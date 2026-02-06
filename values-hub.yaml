@@ -182,10 +182,10 @@ notebooks:
 
       tier3:
         requests:
-          memory: "4Gi"
+          memory: "8Gi"  # Increased from 4Gi for GPU training (5 models)
           cpu: "2000m"
         limits:
-          memory: "8Gi"
+          memory: "16Gi"  # Increased from 8Gi to prevent OOMKilled during multi-model training
           cpu: "4000m"
         timeout: "45m"
         gpu:
