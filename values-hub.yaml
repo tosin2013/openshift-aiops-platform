@@ -267,9 +267,15 @@ notebooks:
             # Model training now handled by Tekton Pipelines (ADR-053)
             # ArgoCD sync no longer blocks on training - Tekton handles scheduling/health checks
             # Fast training mode for ArgoCD validation jobs (~1 min vs ~30 min for production)
+            # Uses hybrid data source: combines real Prometheus metrics with synthetic data
+            # ServiceAccount (self-healing-workbench) has cluster-monitoring-view permissions
             env:
               - name: TRAINING_MODE
                 value: "quick"
+              - name: DATA_SOURCE
+                value: "hybrid"  # hybrid = 50% Prometheus + 50% synthetic (good for validation)
+              - name: PROMETHEUS_URL
+                value: "https://prometheus-k8s.openshift-monitoring.svc:9091"  # HTTPS port 9091 for authenticated access
             validationConfig:
               level: "production"
               strictMode: true
