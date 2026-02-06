@@ -189,7 +189,7 @@ notebooks:
           cpu: "4000m"
         timeout: "45m"
         gpu:
-          enabled: false
+          enabled: true  # Enable GPU allocation for tier3 notebooks
           count: "1"
 
     # =========================================================================
@@ -373,6 +373,23 @@ notebooks:
           - name: "cost-optimization"
             path: "notebooks/08-advanced-scenarios/cost-optimization-resource-efficiency.ipynb"
             tier: "tier2"
+
+# ============================================================================
+# STORAGE CONFIGURATION
+# ============================================================================
+storage:
+  # Model Storage PVC (shared between notebooks and KServe)
+  # Uses ocs-storagecluster-cephfs (RWX) for multi-pod access
+  modelStorage:
+    size: "10Gi"
+    storageClass: "ocs-storagecluster-cephfs"  # RWX required for notebook + inference pods
+
+  # Model Storage PVC for GPU Training
+  # GPU nodes cannot mount ocs-storagecluster-cephfs, so we use gp3-csi (RWO)
+  # Models are copied to model-storage-pvc (ocs-storagecluster-cephfs) after training
+  modelStorageGpu:
+    size: "10Gi"
+    storageClass: "gp3-csi"  # GPU-compatible storage class (RWO)
 
 # ============================================================================
 # GO-BASED SERVICES CONFIGURATION

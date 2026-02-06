@@ -73,14 +73,31 @@ spec:
     envFrom:
     - secretRef:
         name: model-storage-config
-    # Mount shared model storage for training output (PVC primary, S3 optional backup)
+    # Mount shared model storage for training output
+    # GPU jobs use model-storage-gpu-pvc (gp3-csi), non-GPU jobs use model-storage-pvc (ocs-storagecluster-cephfs)
     volumeMounts:
+    {{- if and .notebook.gpuRequired (and .resources.gpu .resources.gpu.enabled) }}
+    - name: model-storage-gpu
+      mountPath: /mnt/models-gpu
+    - name: model-storage
+      mountPath: /mnt/models  # Also mount final PVC for post-training copy
+    {{- else }}
     - name: model-storage
       mountPath: /mnt/models
+    {{- end }}
     volumes:
+    {{- if and .notebook.gpuRequired (and .resources.gpu .resources.gpu.enabled) }}
+    - name: model-storage-gpu
+      persistentVolumeClaim:
+        claimName: model-storage-gpu-pvc
     - name: model-storage
       persistentVolumeClaim:
         claimName: model-storage-pvc
+    {{- else }}
+    - name: model-storage
+      persistentVolumeClaim:
+        claimName: model-storage-pvc
+    {{- end }}
   timeout: {{ .resources.timeout | default "15m" }}
   {{- if .notebook.modelValidation }}
   # v1.0.5: Model-aware validation (validates against deployed KServe models)
