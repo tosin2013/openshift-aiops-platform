@@ -46,11 +46,9 @@ spec:
     spec:
       serviceAccountName: self-healing-operator
       restartPolicy: OnFailure
-      # CephFS PVC files are owned by namespace GID — set fsGroup so this pod
-      # can read/write model files.  Do NOT set runAsUser (let OpenShift SCC
-      # assign a UID from the namespace range to stay within restricted-v2).
-      securityContext:
-        fsGroup: 1000910000
+      # No securityContext — let OpenShift SCC assign UID/GID from namespace range.
+      # The namespace range is [1000960000, 1000969999]; hardcoding any value
+      # outside that range causes "forbidden: unable to validate against any SCC".
       initContainers:
       # Wait for final PVC to be mounted (required)
       - name: wait-for-pvcs
