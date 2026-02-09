@@ -167,11 +167,19 @@ make operator-deploy-prereqs
 # 7. Deploy the platform via Validated Patterns Operator
 make operator-deploy
 
-# 8. Validate deployment
+# 8. Sync ArgoCD (if needed)
+# A manual sync or refresh may be required for the self-healing-platform-hub ArgoCD project
+oc annotate application self-healing-platform -n self-healing-platform-hub \
+  argocd.argoproj.io/refresh=hard --overwrite
+
+# 9. Validate deployment
 make argo-healthcheck
+
+# 10. Run Tekton validation pipeline (validates coordination engine + model connectivity)
+tkn pipeline start deployment-validation-pipeline --showlog
 ```
 
-> **💡 Note**: Step 9 (`make operator-deploy`) automatically runs step 8 (`operator-deploy-prereqs`) as a dependency. However, running them separately helps with troubleshooting and understanding the deployment flow.
+> **💡 Note**: Step 7 (`make operator-deploy`) automatically runs step 6 (`operator-deploy-prereqs`) as a dependency. However, running them separately helps with troubleshooting and understanding the deployment flow.
 
 > **⚠️ Critical**: If you skip step 3 (updating repoURL in values files), ArgoCD will try to sync from the example Gitea URL which won't exist on your cluster, causing deployment failures. Always update both `values-global.yaml` and `values-hub.yaml` to point to YOUR fork's repository URL.
 
@@ -218,7 +226,16 @@ podman tag quay.io/takinosh/openshift-aiops-platform-ee:latest \
 make check-prerequisites
 make operator-deploy-prereqs
 make operator-deploy
+
+# 8. Sync ArgoCD (if needed)
+oc annotate application self-healing-platform -n self-healing-platform-hub \
+  argocd.argoproj.io/refresh=hard --overwrite
+
+# 9. Validate deployment
 make argo-healthcheck
+
+# 10. Run Tekton validation pipeline (validates coordination engine + model connectivity)
+tkn pipeline start deployment-validation-pipeline --showlog
 ```
 
 > **📖 More info**: See [Gitea Integration Guide](docs/GITEA-INTEGRATION-GUIDE.md) for detailed setup
