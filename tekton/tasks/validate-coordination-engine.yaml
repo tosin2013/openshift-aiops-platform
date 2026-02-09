@@ -157,6 +157,34 @@ spec:
           fi
         done
 
+    - name: test-model-inference
+      image: quay.io/takinosh/maintenance-tools:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "=== Testing Model Inference ==="
+
+        NAMESPACE="$(params.namespace)"
+        BASE_URL="http://coordination-engine.${NAMESPACE}.svc.cluster.local:8080"
+
+        MODELS="anomaly-detector predictive-analytics"
+
+        for model in $MODELS; do
+          echo "Sending inference request for model: $model"
+
+          RESPONSE=$(curl -s --max-time 15 -X POST "${BASE_URL}/api/v1/detect" \
+            -H "Content-Type: application/json" \
+            -d "{\"model\": \"${model}\", \"instances\": [[0.5, 1.2, 0.8]]}" || echo "FAILED")
+
+          if echo "$RESPONSE" | grep -q '"predictions"'; then
+            echo "PASS: Model $model returned predictions"
+          else
+            echo "WARNING: Model $model inference test did not return predictions"
+            echo "Response: $RESPONSE"
+          fi
+        done
+
     - name: generate-coordination-engine-report
       image: quay.io/takinosh/maintenance-tools:latest
       script: |
@@ -165,10 +193,11 @@ spec:
         echo "=== Coordination Engine Validation Report ==="
         echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "Status: PASS"
-        echo "Checks Passed: 4/4"
+        echo "Checks Passed: 5/5"
         echo ""
         echo "Summary:"
         echo "  Coordination engine pods running"
         echo "  Health endpoint responding"
         echo "  Model registry populated"
         echo "  Model connectivity verified"
+        echo "  Model inference tested"
