@@ -685,8 +685,13 @@ spec:
 
         NAMESPACE="$(params.namespace)"
 
-        if ! oc get statefulset prometheus-k8s -n openshift-monitoring &>/dev/null; then
-          echo "WARNING: Prometheus not found in openshift-monitoring"
+        # Probe Prometheus readiness via HTTP (no cross-namespace RBAC needed)
+        PROM_URL="https://prometheus-k8s.openshift-monitoring.svc:9091/-/ready"
+        TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        RESPONSE=$(curl -s --max-time 10 -k -H "Authorization: Bearer ${TOKEN}" "${PROM_URL}" 2>&1 || echo "FAILED")
+
+        if ! echo "$RESPONSE" | grep -qi "ready"; then
+          echo "WARNING: Prometheus not reachable in openshift-monitoring"
           exit 0
         fi
 
@@ -996,21 +1001,19 @@ spec:
 
         echo "=== Checking Prometheus ==="
 
-        # On OpenShift, Prometheus runs as a StatefulSet managed by cluster-monitoring-operator
-        if ! oc get statefulset prometheus-k8s -n openshift-monitoring &>/dev/null; then
-          echo "WARNING: Prometheus StatefulSet not found in openshift-monitoring"
-          exit 0
-        fi
+        # Pipeline SA lacks cross-namespace RBAC, so probe Prometheus via HTTP
+        PROM_URL="https://prometheus-k8s.openshift-monitoring.svc:9091/-/ready"
+        TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
 
-        echo "PASS: Prometheus is deployed"
+        RESPONSE=$(curl -s --max-time 10 -k -H "Authorization: Bearer ${TOKEN}" "${PROM_URL}" 2>&1 || echo "FAILED")
 
-        READY=$(oc get statefulset prometheus-k8s -n openshift-monitoring -o jsonpath='{.status.readyReplicas}')
-        DESIRED=$(oc get statefulset prometheus-k8s -n openshift-monitoring -o jsonpath='{.spec.replicas}')
-
-        if [[ "$READY" == "$DESIRED" ]]; then
-          echo "PASS: Prometheus pods are ready ($READY/$DESIRED)"
+        if echo "$RESPONSE" | grep -qi "ready"; then
+          echo "PASS: Prometheus is deployed and ready"
+        elif [[ "$RESPONSE" == "FAILED" ]]; then
+          echo "WARNING: Could not reach Prometheus at ${PROM_URL}"
         else
-          echo "WARNING: Prometheus pods not fully ready ($READY/$DESIRED)"
+          echo "WARNING: Prometheus responded but may not be ready"
+          echo "Response: $RESPONSE"
         fi
 
     - name: check-prometheus-targets
@@ -1021,12 +1024,17 @@ spec:
 
         echo "=== Checking Prometheus Scrape Targets ==="
 
-        if ! oc get service prometheus-k8s -n openshift-monitoring &>/dev/null; then
-          echo "WARNING: Prometheus service not found"
+        # Probe Prometheus readiness via HTTP (no cross-namespace RBAC needed)
+        PROM_URL="https://prometheus-k8s.openshift-monitoring.svc:9091/-/ready"
+        TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        RESPONSE=$(curl -s --max-time 10 -k -H "Authorization: Bearer ${TOKEN}" "${PROM_URL}" 2>&1 || echo "FAILED")
+
+        if ! echo "$RESPONSE" | grep -qi "ready"; then
+          echo "WARNING: Prometheus not reachable"
           exit 0
         fi
 
-        echo "PASS: Prometheus service is available"
+        echo "PASS: Prometheus is reachable"
 
         if oc get servicemonitor -n "$(params.namespace)" &>/dev/null; then
           MONITORS=$(oc get servicemonitor -n "$(params.namespace)" -o jsonpath='{.items[*].metadata.name}')
