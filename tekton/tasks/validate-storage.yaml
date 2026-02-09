@@ -57,22 +57,42 @@ spec:
         PVCS=$(oc get pvc -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}')
 
         if [[ -z "$PVCS" ]]; then
-          echo "⚠️  WARNING: No PVCs found in namespace $NAMESPACE"
-          return 0
+          echo "WARNING: No PVCs found in namespace $NAMESPACE"
+          exit 0
         fi
+
+        FAILURES=0
 
         # Check each PVC status
         for pvc in $PVCS; do
           STATUS=$(oc get pvc "$pvc" -n "$NAMESPACE" -o jsonpath='{.status.phase}')
           SIZE=$(oc get pvc "$pvc" -n "$NAMESPACE" -o jsonpath='{.spec.resources.requests.storage}')
+          SC_NAME=$(oc get pvc "$pvc" -n "$NAMESPACE" -o jsonpath='{.spec.storageClassName}')
 
           if [[ "$STATUS" == "Bound" ]]; then
-            echo "✅ PASS: PVC $pvc is bound ($SIZE)"
+            echo "PASS: PVC $pvc is bound ($SIZE)"
+          elif [[ "$STATUS" == "Pending" ]]; then
+            BIND_MODE=""
+            if [[ -n "$SC_NAME" ]]; then
+              BIND_MODE=$(oc get storageclass "$SC_NAME" -o jsonpath='{.volumeBindingMode}' 2>/dev/null || echo "")
+            fi
+            if [[ "$BIND_MODE" == "WaitForFirstConsumer" ]]; then
+              echo "PASS: PVC $pvc is Pending ($SIZE) — StorageClass $SC_NAME uses WaitForFirstConsumer (binds on first pod mount)"
+            else
+              echo "FAIL: PVC $pvc is Pending ($SIZE) — StorageClass: ${SC_NAME:-<none>}, bindingMode: ${BIND_MODE:-<unknown>}"
+              FAILURES=$((FAILURES + 1))
+            fi
           else
-            echo "❌ FAIL: PVC $pvc is not bound (status: $STATUS)"
-            exit 1
+            echo "FAIL: PVC $pvc has unexpected status: $STATUS ($SIZE)"
+            FAILURES=$((FAILURES + 1))
           fi
         done
+
+        if [[ $FAILURES -gt 0 ]]; then
+          echo ""
+          echo "FAIL: $FAILURES PVC(s) in unexpected state"
+          exit 1
+        fi
 
     - name: check-odf-health
       image: quay.io/takinosh/maintenance-tools:latest

@@ -130,13 +130,17 @@ spec:
           -o jsonpath='{range .items[?(@.status.conditions[?(@.type=="Ready" && @.status=="True")])]}{.metadata.name}{"\n"}{end}')
 
         if [[ -z "$SERVICES" ]]; then
-          echo "⚠️  WARNING: No ready InferenceServices to test"
+          echo "WARNING: No ready InferenceServices to test"
           exit 0
         fi
 
         for service in $SERVICES; do
-          # Get predictor URL (internal cluster service)
-          PREDICTOR_URL="http://${service}-predictor.${NAMESPACE}.svc.cluster.local:8080"
+          PREDICTOR_URL=$(oc get inferenceservice "$service" -n "$NAMESPACE" -o jsonpath='{.status.url}')
+
+          if [[ -z "$PREDICTOR_URL" ]]; then
+            echo "WARNING: InferenceService $service has no .status.url yet — skipping"
+            continue
+          fi
 
           echo "Testing inference endpoint: $PREDICTOR_URL"
 
@@ -150,9 +154,9 @@ spec:
             --fail 2>&1 || echo "FAILED")
 
           if [[ "$RESPONSE" == "FAILED" ]]; then
-            echo "⚠️  WARNING: Inference endpoint test failed for $service"
+            echo "WARNING: Inference endpoint test failed for $service"
           else
-            echo "✅ PASS: Inference endpoint responding for $service"
+            echo "PASS: Inference endpoint responding for $service"
           fi
         done
 
