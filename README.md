@@ -167,15 +167,19 @@ make operator-deploy-prereqs
 # 7. Deploy the platform via Validated Patterns Operator
 make operator-deploy
 
-# 8. Sync ArgoCD (if needed)
+# 8. Wait for the ArgoCD Application to be created by the operator
+oc wait --for=jsonpath='{.kind}'=Application \
+  application/self-healing-platform -n self-healing-platform-hub --timeout=120s
+
+# 9. Sync ArgoCD (if needed)
 # A manual sync or refresh may be required for the self-healing-platform-hub ArgoCD project
 oc annotate application self-healing-platform -n self-healing-platform-hub \
   argocd.argoproj.io/refresh=hard --overwrite
 
-# 9. Validate deployment
+# 10. Validate deployment
 make argo-healthcheck
 
-# 10. Run Tekton validation pipeline (validates coordination engine + model connectivity)
+# 11. Run Tekton validation pipeline (validates coordination engine + model connectivity)
 tkn pipeline start deployment-validation-pipeline --showlog
 ```
 
@@ -227,14 +231,18 @@ make check-prerequisites
 make operator-deploy-prereqs
 make operator-deploy
 
-# 8. Sync ArgoCD (if needed)
+# 8. Wait for the ArgoCD Application to be created by the operator
+oc wait --for=jsonpath='{.kind}'=Application \
+  application/self-healing-platform -n self-healing-platform-hub --timeout=120s
+
+# 9. Sync ArgoCD (if needed)
 oc annotate application self-healing-platform -n self-healing-platform-hub \
   argocd.argoproj.io/refresh=hard --overwrite
 
-# 9. Validate deployment
+# 10. Validate deployment
 make argo-healthcheck
 
-# 10. Run Tekton validation pipeline (validates coordination engine + model connectivity)
+# 11. Run Tekton validation pipeline (validates coordination engine + model connectivity)
 tkn pipeline start deployment-validation-pipeline --showlog
 ```
 
