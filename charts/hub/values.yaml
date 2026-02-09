@@ -226,12 +226,14 @@ models:
     cpuLimit: "4"
     memoryLimit: "8Gi"
     syncWave: "2"
+    gpuTrained: false
   - name: predictive-analytics
     cpu: "1"
     memory: "2Gi"
     cpuLimit: "2"
     memoryLimit: "6Gi"
     syncWave: "2"
+    gpuTrained: true
 
 # AI/ML Workbench configuration
 workbench:

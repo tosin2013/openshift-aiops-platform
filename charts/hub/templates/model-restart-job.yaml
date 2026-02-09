@@ -109,17 +109,26 @@ spec:
           # already present in the final PVC from previous training runs.
           copy_model_from_gpu() {
             local model_name=$1
+            local is_gpu_trained=${2:-false}
             local gpu_path="/mnt/models-gpu/${model_name}/model.pkl"
             local final_path="/mnt/models/${model_name}/model.pkl"
             local final_dir="/mnt/models/${model_name}"
 
             # Check if GPU PVC is available and has model
             if [ ! -d /mnt/models-gpu ]; then
+              if [ "$is_gpu_trained" = "true" ]; then
+                echo "✗ ERROR: GPU PVC not mounted but model $model_name requires GPU training"
+                return 1
+              fi
               echo "ℹ️  GPU PVC not mounted (RWO may still be held by training pod)"
               return 0
             fi
 
             if [ ! -f "$gpu_path" ]; then
+              if [ "$is_gpu_trained" = "true" ]; then
+                echo "✗ ERROR: Model not found in GPU PVC: $gpu_path (expected for GPU-trained model)"
+                return 1
+              fi
               echo "ℹ️  Model not found in GPU PVC (not GPU-trained)"
               return 0
             fi
@@ -179,7 +188,7 @@ spec:
             echo "Expected path: $model_path"
 
             # First, try copying from GPU PVC if available
-            copy_model_from_gpu "$model_name"
+            copy_model_from_gpu "$model_name" "$is_gpu_trained"
 
             # Then wait for model in final PVC
             while [ $elapsed -lt $MAX_WAIT_PER_MODEL ]; do
@@ -256,9 +265,10 @@ spec:
           # Process each model
           {{- range .Values.models }}
           MODEL_NAME="{{ .name }}"
+          is_gpu_trained="{{ .gpuTrained | default false }}"
           echo ""
           echo "=========================================="
-          echo "Processing model: $MODEL_NAME"
+          echo "Processing model: $MODEL_NAME (gpuTrained=$is_gpu_trained)"
           echo "=========================================="
 
           # Wait for model file

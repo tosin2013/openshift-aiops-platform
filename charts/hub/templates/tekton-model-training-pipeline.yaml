@@ -543,6 +543,110 @@ spec:
         sys.exit(1)
 
 ---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: copy-gpu-model-to-shared
+  namespace: {{ .Values.main.namespace }}
+  labels:
+    app.kubernetes.io/name: copy-gpu-model-to-shared
+    app.kubernetes.io/part-of: model-training
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  description: |
+    Copies a GPU-trained model from the GPU PVC (gp3-csi, RWO) to the shared
+    PVC (CephFS, RWX). Waits for the GPU PVC to become available and the
+    model file to exist before copying.
+
+  params:
+    - name: model-name
+      type: string
+      description: "Model name (e.g., predictive-analytics)"
+
+  steps:
+    - name: wait-and-copy
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      volumeMounts:
+        - name: model-storage-gpu
+          mountPath: /mnt/models-gpu
+        - name: model-storage
+          mountPath: /mnt/models
+      script: |
+        #!/bin/bash
+        set -e
+
+        MODEL_NAME="$(params.model-name)"
+        GPU_PATH="/mnt/models-gpu/${MODEL_NAME}/model.pkl"
+        FINAL_PATH="/mnt/models/${MODEL_NAME}/model.pkl"
+        FINAL_DIR="/mnt/models/${MODEL_NAME}"
+        MAX_WAIT=600  # 10 minutes
+        ELAPSED=0
+        INTERVAL=10
+
+        echo "=========================================="
+        echo "Copy GPU Model to Shared Storage"
+        echo "=========================================="
+        echo "Model:  $MODEL_NAME"
+        echo "Source: $GPU_PATH"
+        echo "Target: $FINAL_PATH"
+        echo "=========================================="
+
+        # Wait for model file on GPU PVC
+        echo "Waiting for GPU model file..."
+        while [ $ELAPSED -lt $MAX_WAIT ]; do
+          if [ -f "$GPU_PATH" ]; then
+            FILE_SIZE=$(stat -c%s "$GPU_PATH" 2>/dev/null || echo "0")
+            if [ "$FILE_SIZE" -gt 0 ]; then
+              echo "✓ Model file found: $GPU_PATH (size: $FILE_SIZE bytes)"
+              break
+            fi
+            echo "⏳ Model file exists but is empty, waiting..."
+          else
+            echo "⏳ Model not yet available, waiting ${INTERVAL}s... (${ELAPSED}s/${MAX_WAIT}s)"
+          fi
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+
+        if [ ! -f "$GPU_PATH" ] || [ "$(stat -c%s "$GPU_PATH" 2>/dev/null || echo 0)" -eq 0 ]; then
+          echo "✗ ERROR: GPU model not found after ${MAX_WAIT}s: $GPU_PATH"
+          exit 1
+        fi
+
+        GPU_SIZE=$(stat -c%s "$GPU_PATH")
+
+        # Copy model
+        mkdir -p "$FINAL_DIR"
+        echo "Copying model..."
+        cp -f "$GPU_PATH" "$FINAL_PATH"
+
+        # Verify
+        if [ ! -f "$FINAL_PATH" ]; then
+          echo "✗ ERROR: Copy failed — target file not found"
+          exit 1
+        fi
+
+        TARGET_SIZE=$(stat -c%s "$FINAL_PATH" 2>/dev/null || echo "0")
+        if [ "$GPU_SIZE" != "$TARGET_SIZE" ]; then
+          echo "✗ ERROR: Size mismatch — source: $GPU_SIZE, target: $TARGET_SIZE"
+          exit 1
+        fi
+
+        echo "=========================================="
+        echo "✓ Model copied successfully!"
+        echo "  Size: $TARGET_SIZE bytes"
+        echo "=========================================="
+
+  volumes:
+    - name: model-storage-gpu
+      persistentVolumeClaim:
+        claimName: model-storage-gpu-pvc
+    - name: model-storage
+      persistentVolumeClaim:
+        claimName: model-storage-pvc
+
+---
 # Main Model Training Pipeline
 apiVersion: tekton.dev/v1beta1
 kind: Pipeline
@@ -583,6 +687,10 @@ spec:
     - name: inference-service-name
       type: string
       description: "InferenceService to restart after training"
+    - name: gpu-trained
+      type: string
+      default: "false"
+      description: "Whether the model is GPU-trained and needs copying from GPU PVC to shared PVC"
     - name: health-check-enabled
       type: string
       default: "true"
@@ -614,6 +722,20 @@ spec:
         - name: git-ref
           value: $(params.git-ref)
 
+    # Task 1.5: Copy GPU model to shared storage (only if GPU-trained)
+    - name: copy-gpu-model
+      when:
+        - input: "$(params.gpu-trained)"
+          operator: in
+          values: ["true"]
+      runAfter:
+        - train-model
+      taskRef:
+        name: copy-gpu-model-to-shared
+      params:
+        - name: model-name
+          value: $(params.model-name)
+
     # Task 2: Health check (only if enabled)
     - name: health-check
       when:
@@ -621,7 +743,7 @@ spec:
           operator: in
           values: ["true"]
       runAfter:
-        - train-model
+        - copy-gpu-model
       taskRef:
         name: validate-model-health
       params:

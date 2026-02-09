@@ -67,6 +67,8 @@ spec:
                         value: "168"
                       - name: inference-service-name
                         value: "anomaly-detector"
+                      - name: gpu-trained
+                        value: "false"
                       - name: health-check-enabled
                         value: "{{ .Values.tekton.modelTraining.healthCheckEnabled | default "true" }}"
                       - name: git-url
@@ -153,6 +155,8 @@ spec:
                         value: "720"
                       - name: inference-service-name
                         value: "predictive-analytics"
+                      - name: gpu-trained
+                        value: "true"
                       - name: health-check-enabled
                         value: "{{ .Values.tekton.modelTraining.healthCheckEnabled | default "true" }}"
                       - name: git-url
