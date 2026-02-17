@@ -75,6 +75,7 @@ spec:
         NOTEBOOK_PATH="$(params.notebook-path)"
         DATA_SOURCE="$(params.data-source)"
         TRAINING_HOURS="$(params.training-hours)"
+        TRAINING_DAYS=$(( TRAINING_HOURS / 24 ))
         GIT_URL="$(params.git-url)"
         GIT_REF="$(params.git-ref)"
         JOB_NAME="train-${MODEL_NAME}-$(date +%s)"
@@ -86,6 +87,7 @@ spec:
         echo "Notebook:       $NOTEBOOK_PATH"
         echo "Data Source:    $DATA_SOURCE"
         echo "Training Hours: $TRAINING_HOURS"
+        echo "Training Days:  $TRAINING_DAYS"
         echo "Git URL:        $GIT_URL"
         echo "Git Ref:        $GIT_REF"
         echo "Job Name:       $JOB_NAME"
@@ -116,7 +118,7 @@ spec:
               - name: TRAINING_HOURS
                 value: "$TRAINING_HOURS"
               - name: TRAINING_DAYS
-                value: "7"
+                value: "$TRAINING_DAYS"
               - name: ANOMALY_RATE
                 value: "0.03"
             envFrom:
@@ -246,6 +248,7 @@ spec:
         NOTEBOOK_PATH="$(params.notebook-path)"
         DATA_SOURCE="$(params.data-source)"
         TRAINING_HOURS="$(params.training-hours)"
+        TRAINING_DAYS=$(( TRAINING_HOURS / 24 ))
         GIT_URL="$(params.git-url)"
         GIT_REF="$(params.git-ref)"
         JOB_NAME="train-${MODEL_NAME}-$(date +%s)"
@@ -257,6 +260,7 @@ spec:
         echo "Notebook:       $NOTEBOOK_PATH"
         echo "Data Source:    $DATA_SOURCE"
         echo "Training Hours: $TRAINING_HOURS"
+        echo "Training Days:  $TRAINING_DAYS"
         echo "Git URL:        $GIT_URL"
         echo "Git Ref:        $GIT_REF"
         echo "Job Name:       $JOB_NAME"
@@ -287,7 +291,7 @@ spec:
               - name: TRAINING_HOURS
                 value: "$TRAINING_HOURS"
               - name: TRAINING_DAYS
-                value: "7"
+                value: "$TRAINING_DAYS"
               - name: ANOMALY_RATE
                 value: "0.03"
             envFrom:
@@ -480,8 +484,8 @@ spec:
             test_data = np.random.rand(10, 45)
             print(f"   Test data shape: {test_data.shape}")
         elif model_name == "predictive-analytics":
-            # 120 features for predictive analytics (24 samples x 5 metrics)
-            test_data = np.random.rand(10, 120)
+            # 5 features: [cpu, memory, disk, network_in, network_out]
+            test_data = np.random.rand(10, 5)
             print(f"   Test data shape: {test_data.shape}")
         else:
             print(f"Unknown model type: {model_name}, using 45 features")
