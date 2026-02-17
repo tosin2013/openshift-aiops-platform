@@ -668,7 +668,7 @@ spec:
         if model_name == "anomaly-detector":
             test_data = np.random.rand(45).tolist()
         elif model_name == "predictive-analytics":
-            test_data = np.random.rand(120).tolist()
+            test_data = np.random.rand(5).tolist()
         else:
             test_data = np.random.rand(45).tolist()
 
