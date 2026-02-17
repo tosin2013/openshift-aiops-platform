@@ -370,8 +370,8 @@ spec:
             # 45 features for Isolation Forest
             test_data = np.random.rand(10, 45)
         elif model_name == "predictive-analytics":
-            # 120 features for predictive analytics
-            test_data = np.random.rand(10, 120)
+            # 5 features: [cpu, memory, disk, network_in, network_out]
+            test_data = np.random.rand(10, 5)
         else:
             print(f"❌ Unknown model type: {model_name}")
             sys.exit(1)
